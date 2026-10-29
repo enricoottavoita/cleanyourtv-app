@@ -1,0 +1,31 @@
+name: Tell us it worked
+description: The new home screen held on your TV after a restart. The app fills this in.
+title: "Confirmation: "
+labels: ["confirmation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. Each confirmation counts for your TV model and its Android version, and helps it get the new
+        home screen in a release.
+
+        **The app fills this in.** After a restart that kept the new home screen, tap **Tell us it worked** on Done
+        or on Manage, then **Open GitHub**. Please post the box below as the app wrote it; a bot reads it.
+
+        It holds the app's version, the TV's model and Android version, and what the app counted across restarts.
+        No names, no addresses, no serial numbers, no keys. Nothing is public until you post this form.
+  - type: textarea
+    id: confirmation
+    attributes:
+      label: From the app
+      description: The app fills this in. Please leave it as it is.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else (optional)
+      description: A few words if you like, for example which remote buttons you use.
+    validations:
+      required: false
