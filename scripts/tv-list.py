@@ -13,7 +13,7 @@ Builds one row per TV (brand, model and codename) from three inputs, models and 
   4. Optionally the confirmations table the issue routine keeps (-k, research/release-0.4.7/
      confirmations.json, from scripts/triage/confirm.py on the triage-bot branch): for each brand and
      Android version, how many testers confirmed the new home screen stayed after a restart, and how
-     many the graduation rule needs (2 on a version already proven for the brand, 3 otherwise). Next
+     many the graduation rule needs (2 per brand and Android version since 2026-10-29; it was 3 on a version not yet proven). Next
      test build TVs, and Coming soon TVs waiting for that count, show "N of M confirmations". Only the
      counts are read, never who confirmed.
 
