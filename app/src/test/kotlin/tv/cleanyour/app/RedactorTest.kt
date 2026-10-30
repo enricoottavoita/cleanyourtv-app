@@ -1,5 +1,7 @@
 package tv.cleanyour.app
 
+import kotlinx.coroutines.runBlocking
+import tv.cleanyour.core.flows.OwnVersion
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -57,5 +59,21 @@ class RedactorTest {
         // The dot that ends a sentence is not part of a build string.
         assertEquals("connect failed from x.x.x.20.", Redactor.redact("connect failed from 192.168.1.20."))
         assertEquals("[x.x.x.1] (x.x.x.9)", Redactor.redact("[192.168.1.1] (10.0.0.9)"))
+    }
+
+    // 0.4.7-beta2: the diagnostics header said "Clean Your TV x.x.x.1" from 0.4.6.1 on, because a
+    // four-part hotfix version is four octets. The header keeps the running app's version; an
+    // address on the same line, and the same digits inside a log line, still go.
+    @Test fun theAppsOwnFourPartVersionSurvivesTheHeader() {
+        val header = runBlocking { LogDiagnostics("0.4.6.1") { "Clean Your TV 0.4.6.1, Android 33, at 192.168.1.23" }.redactedText() }.lines().first()
+        assertEquals("Clean Your TV 0.4.6.1, Android 33, at x.x.x.23", header)
+        val text = "Clean Your TV 0.4.6.1, Android 33\n1792745323148 I setup: connect 0.4.6.1 refused by 192.168.1.23\nApp: 0.4.6.1 (full)"
+        assertEquals("Clean Your TV 0.4.6.1, Android 33\n1792745323148 I setup: connect x.x.x.1 refused by x.x.x.23\nApp: 0.4.6.1 (full)",
+            OwnVersion.keep(text, "0.4.6.1", Redactor::redact))
+        assertEquals("Clean Your TV 0.4.7.1-beta1, Android 33", OwnVersion.keep("Clean Your TV 0.4.7.1-beta1, Android 33", "0.4.7.1-beta1", Redactor::redact))
+        // Without the version, or with another one, every dotted quad goes as before.
+        assertEquals("Clean Your TV x.x.x.1, Android 33", Redactor.redact("Clean Your TV 0.4.6.1, Android 33"))
+        assertEquals("Clean Your TV x.x.x.5, Android 33", OwnVersion.keep("Clean Your TV 10.0.0.5, Android 33", "0.4.6.1", Redactor::redact))
+        assertEquals("Clean Your TV x.x.x.1, Android 33", OwnVersion.keep("Clean Your TV 0.4.6.1, Android 33", null, Redactor::redact))
     }
 }

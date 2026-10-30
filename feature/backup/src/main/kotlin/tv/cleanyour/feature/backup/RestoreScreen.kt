@@ -97,7 +97,8 @@ fun RestoreScreen(state: RestorePointState, onIntent: (RestorePointIntent) -> Un
             ListRow(stringResource(R.string.restore_row_save), subtitle = stringResource(R.string.restore_row_save_sub),
                 trailing = if (state.exporting) ({ Spinner() }) else null,
                 onClick = if (baseline != null && !state.exporting) ({ onIntent(RestorePointIntent.SaveCopy) }) else null)
-            if (state.googleTv) {
+            // UX finding 17: only when this app switched the setup wizard off on this TV.
+            if (state.wizardOff) {
                 ListDivider()
                 ListRow(stringResource(R.string.restore_row_factory), subtitle = stringResource(R.string.restore_row_factory_sub), onClick = { factory = true })
             }
@@ -128,16 +129,20 @@ internal fun ColumnScope.PreviewContent(pv: UndoPreview, baseline: String, onInt
         CheckLine(msg(R.string.restore_preview_things, "count" to pv.thingsBack), state = CheckState.NONE)
         pv.stockName?.let { CheckLine(msg(R.string.restore_preview_home, "name" to it), state = CheckState.NONE) }
         if (pv.wizardBack) CheckLine(stringResource(R.string.restore_preview_wizard), state = CheckState.NONE)
+        if (pv.helperOff) CheckLine(stringResource(R.string.restore_preview_helper), state = CheckState.NONE)   // RFC-HELPER-1
     }
-    SectionLabel(stringResource(R.string.restore_launcher_title))
-    ChoiceList(
-        listOf(
-            ChoiceOption("keep", stringResource(R.string.restore_launcher_keep), icon = null),
-            ChoiceOption("remove", stringResource(R.string.restore_launcher_remove), stringResource(R.string.restore_launcher_remove_note), icon = null),
-        ),
-        if (pv.removeLauncher) "remove" else "keep",
-        { onIntent(RestorePointIntent.RemoveLauncher(it.key == "remove")) },
-    )
+    // UX finding 17: the choice only when the new home screen is on the TV.
+    if (pv.launcherInstalled) {
+        SectionLabel(stringResource(R.string.restore_launcher_title))
+        ChoiceList(
+            listOf(
+                ChoiceOption("keep", stringResource(R.string.restore_launcher_keep), icon = null),
+                ChoiceOption("remove", stringResource(R.string.restore_launcher_remove), stringResource(R.string.restore_launcher_remove_note), icon = null),
+            ),
+            if (pv.removeLauncher) "remove" else "keep",
+            { onIntent(RestorePointIntent.RemoveLauncher(it.key == "remove")) },
+        )
+    }
     SecondaryButton(stringResource(R.string.restore_preview_button), { onIntent(RestorePointIntent.Confirm) }, Modifier.padding(top = 20.dp))
 }
 

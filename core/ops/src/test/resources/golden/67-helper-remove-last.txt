@@ -1,0 +1,11 @@
+# Home button helper: taken out as the last entry, the list deleted
+op: AccessibilityRemove expected=com.gathin.tvhome/.HomeKeyService component=com.gathin.tvhome/.HomeKeyService offIfEmpty=false
+privilege: PROFILE_STEP
+timeout_ms: 30000
+stdout_cap: 65536
+line: c=$(settings get secure enabled_accessibility_services); if [ "$c" = 'com.gathin.tvhome/.HomeKeyService' ]; then settings delete secure enabled_accessibility_services; else echo 'cleanyourtv: the accessibility list changed since it was read' >&2; exit 3; fi
+transfer: none
+verify: Read kind=SETTINGS ns=SECURE
+verify_line: 'settings' 'list' 'secure'
+prior: settingValue=com.gathin.tvhome/.HomeKeyService
+inverse: none

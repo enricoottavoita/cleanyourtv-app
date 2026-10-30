@@ -46,7 +46,7 @@ class GuardedActionsTest {
         val state = RestorePointState("Mi TV 4A", Samples.NOW_MS, Samples.NOW_MS, phase = RestorePhase.Finished("undo", Samples.NOW_MS))
         compose.setContent { CytTheme(reducedMotion = true) { RestoreScreen(state, { hits += it }, {}) } }
         compose.waitForIdle()
-        compose.tap("Clean it up again", OBSCURED)
+        compose.tap("Run Setup again", OBSCURED)
         assertEquals(listOf<RestorePointIntent>(RestorePointIntent.CleanAgain), hits)
     }
 }

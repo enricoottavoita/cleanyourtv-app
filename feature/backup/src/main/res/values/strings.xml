@@ -35,8 +35,10 @@
     <!-- Undo everything: preview (UX 4.13) -->
     <string name="restore_preview_title">This puts the TV back to how it was on {date}:</string>
     <string name="restore_preview_things">{count, plural, one {Turn # thing back on} other {Turn # things back on}}</string>
-    <string name="restore_preview_home">Old home screen ({name}) back in charge</string>
+    <string name="restore_preview_home">The TV\'s own home screen ({name}) back in charge</string>
     <string name="restore_preview_wizard">Setup wizard back on</string>
+    <!-- RFC-HELPER-1 (test build): Undo everything takes the Home button helper out -->
+    <string name="restore_preview_helper">Home button helper switched off</string>
     <string name="restore_preview_screensaver">Clock screensaver back to the TV\'s own</string>
     <string name="restore_preview_keyboard">Keyboard back to the TV\'s own</string>
     <string name="restore_launcher_title">New home screen</string>
@@ -53,11 +55,11 @@
     <!-- Undo everything: narration and end -->
     <string name="restore_working_title">Putting everything back</string>
     <string name="restore_working_things">{total, plural, other {Turning things back on: {done} of #...}}</string>
-    <string name="restore_working_home">Putting the old home screen back...</string>
+    <string name="restore_working_home">Putting the TV\'s own home screen back...</string>
     <string name="restore_working_wizard">Switching the setup wizard back on...</string>
     <string name="restore_done_title">Everything is back</string>
     <string name="restore_done_body">Your TV is as it was on {date}. The restore point is kept in case you change your mind.</string>
-    <string name="restore_clean_again">Clean it up again</string>
+    <string name="restore_clean_again">Run Setup again</string>
 
     <!-- Before a factory reset -->
     <string name="restore_factory_title">Before a factory reset</string>

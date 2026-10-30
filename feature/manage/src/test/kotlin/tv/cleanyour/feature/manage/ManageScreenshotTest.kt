@@ -22,8 +22,14 @@ import tv.cleanyour.core.flows.AppSettingsState
 import tv.cleanyour.core.flows.ChipState
 import tv.cleanyour.core.flows.LeftoversState
 import tv.cleanyour.core.flows.ManageState
+import tv.cleanyour.core.flows.Reach
+import tv.cleanyour.core.flows.ReachCheck
 import tv.cleanyour.core.flows.ReportKind
+import tv.cleanyour.core.flows.Seen
 import tv.cleanyour.core.flows.ReportState
+import tv.cleanyour.core.flows.HomePath
+import tv.cleanyour.core.flows.RestartTally
+import tv.cleanyour.core.flows.SentReport
 import tv.cleanyour.core.flows.OffGroup
 import tv.cleanyour.core.flows.OffRow
 import tv.cleanyour.core.flows.OpenWrite
@@ -55,6 +61,7 @@ private fun fakeShot(): ByteArray {
 }
 
 private const val NOW = Samples.NOW_MS
+private const val FINGERPRINT = "3A:91:0C:7E:55:12:9B:44:E0:21:6D:88:F3:0A:BC:42"
 private val tvId = Samples.miTvId()
 private val dockNames = listOf("Netflix", "YouTube", "Prime Video", "Live TV")
 private val shotPng by lazy { fakeShot() }
@@ -167,7 +174,42 @@ private val problemReport = """
     1792745323148 I setup: run paused STEP_FAILED at step 72: undo step failed: Enable com.amazon.tv.launcher: nonzero_exit(1)
 """.trimIndent()
 
-private fun report(kind: ReportKind, text: String = if (kind == ReportKind.TV) tvReport else problemReport, inLink: Boolean = true) =
+// 0.4.8: the confirmation block (TvReport.confirmation), as the preview shows it.
+private val confirmation = """
+    Clean Your TV: confirmation
+    Format: 1
+    App: 0.4.8 (full)
+    Build kind: test build
+    Phone: Samsung SM-S921B, Android 16
+
+    TV
+    Brand: Xiaomi
+    Manufacturer: Xiaomi
+    Model: MiTV-AXSO0
+    Device: dangal
+    Android: 9 (SDK 28)
+    Build: Xiaomi/dangal/dangal:9/PI/2120:user/release-keys
+
+    Home screen
+    Profile: exact xiaomi-mitv-axso0
+    Home switch: planned
+
+    Restarts
+    Home path: list
+    Held: 3
+    Failed: 0
+    Last restart: held
+    First counted: 2026-10-28
+    Last counted: 2026-10-30
+    Counted by: 0.4.8 (full, test build)
+    Look route: provider
+    Checked: boot_id and Home only
+""".trimIndent()
+
+private fun held(n: Int, told: Long? = null) = RestartTally(bootId = "b", answered = true, path = HomePath.LIST, held = n, firstAtMs = NOW - 2 * 86_400_000, lastAtMs = NOW,
+    build = "0.4.8 (full, test build)", toldAtMs = told, toldHeld = if (told != null) n else 0)
+
+private fun report(kind: ReportKind, text: String = when (kind) { ReportKind.TV -> tvReport; ReportKind.CONFIRM -> confirmation; else -> problemReport }, inLink: Boolean = true) =
     ReportState(kind, loading = false, text = text, url = "https://github.com/udhaykumarbala/cleanyourtv-app/issues/new", available = true, inLink = inLink)
 
 private val tall = 1100.dp
@@ -202,11 +244,22 @@ object ManageShots {
         Shot("manage_help_add_tv", tall) { ManageScreen(manage(card().copy(helpAddTv = true)), {}) },
         // 0.3.3 D2 (issue #3): the new home screen isn't on this TV; the Home screen row says so.
         Shot("manage_own_home", tall) { ManageScreen(manage(card().copy(helpAddTv = true, ownHome = true, dockNames = emptyList())), {}) },
+        // 0.4.7 (UX finding 8): the new home screen installed but not in use; (must 4) the report sent before.
+        Shot("manage_home_not_in_use", tall) { ManageScreen(manage(card().copy(homeInstalledNotInUse = true, dockNames = emptyList())), {}) },
+        Shot("manage_report_sent", tall) { ManageScreen(manage(card().copy(helpAddTv = true, ownHome = true, dockNames = emptyList(), reportSentAtMs = NOW - 86_400_000)), {}) },
         // WP4 (C6): one line for the apps the list for this TV now keeps on.
         Shot("manage_better_back_on", tall) { ManageScreen(manage(card().copy(betterBackOn = 2)), {}) },
         // 0.4.6: a setup wizard claims Home under the new home screen; the way back, and while it runs.
         Shot("manage_wizard_home", tall) { ManageScreen(manage(card().copy(wizardHome = true)), {}) },
         Shot("manage_wizard_home_working", tall) { ManageScreen(manage(card().copy(wizardHome = true)).copy(switchingHome = true), {}) },
+        // 0.4.7 (StockHomeBack): the TV turned its own home screen back on (XGIMI's remote buttons); Run Setup again leads.
+        Shot("manage_stock_home_back", tall) { ManageScreen(manage(card().copy(stockHomeBack = true)), {}) },
+        // RFC-HELPER-1 (test build): the Home button helper is on; the Home screen row says so.
+        Shot("manage_home_helper", tall) { ManageScreen(manage(card().copy(homeHelperOn = true)), {}) },
+        // 0.4.8 (Restarts): held through restarts, with "Tell us it worked"; told already; a restart that failed.
+        Shot("manage_restarts_held", tall) { ManageScreen(manage(card().copy(restarts = held(3))), {}) },
+        Shot("manage_restarts_told", tall) { ManageScreen(manage(card().copy(restarts = held(1, told = NOW))), {}) },
+        Shot("manage_restart_failed", tall) { ManageScreen(manage(card().copy(restarts = held(2).copy(failed = 1, lastFailed = true, answered = false))), {}) },
         Shot("manage_two_tvs", tall) {
             val other = card().copy(id = TvId("1111222233334444"), name = "Bedroom Chromecast", room = "Bedroom")
             ManageScreen(manage(others = listOf(other)), {})
@@ -217,12 +270,33 @@ object ManageShots {
         Shot("report_problem", tall) { ReportScreen(report(ReportKind.PROBLEM), {}, {}) },
         // 0.3.3 D1: too long for the link, so the screen says it copies the report for the paste.
         Shot("report_tv_too_long", tall) { ReportScreen(report(ReportKind.TV, inLink = false), {}, {}) },
+        // 0.4.7 (must 4): the report sent before, without and with the issue's link.
+        Shot("report_tv_sent", tall) { ReportScreen(report(ReportKind.TV).copy(sent = SentReport(NOW - 86_400_000)), {}, {}) },
+        Shot("report_tv_sent_issue", tall) { ReportScreen(report(ReportKind.TV).copy(sent = SentReport(NOW - 86_400_000, "https://github.com/udhaykumarbala/cleanyourtv-app/issues/1368")), {}, {}) },
+        // 0.4.8: "Tell us it worked", the confirmation's preview, and before a restart was counted.
+        Shot("report_confirm", tall) { ReportScreen(report(ReportKind.CONFIRM), {}, {}) },
+        Shot("report_confirm_unavailable") { ReportScreen(ReportState(ReportKind.CONFIRM, loading = false, available = false), {}, {}) },
         Shot("report_loading") { ReportScreen(ReportState(ReportKind.TV), {}, {}) },
         Shot("report_unavailable") { ReportScreen(ReportState(ReportKind.TV, loading = false, available = false), {}, {}) },
 
         // M1a the debugging step for a returning write
-        Shot("debugstep_waiting") { SheetOver({ ManageScreen(manage(), {}) }) { DebugStepContent("Mi TV 4A", connecting = false) {} } },
-        Shot("debugstep_connecting") { SheetOver({ ManageScreen(manage(), {}) }) { DebugStepContent("Mi TV 4A", connecting = true) {} } },
+        Shot("debugstep_waiting") { SheetOver({ ManageScreen(manage(), {}) }) { DebugStepContent(Reach.NeedsDebugging(tvId, "Mi TV 4A"), ReachCheck(), {}) } },
+        Shot("debugstep_connecting") { SheetOver({ ManageScreen(manage(), {}) }) { DebugStepContent(Reach.Connecting(tvId, "Mi TV 4A"), ReachCheck(), {}) } },
+        // RFC-REACH-1: each case in its own words, the check under "Show details" and the hint after 30 s
+        Shot("debugstep_switched_off") { SheetOver({ ManageScreen(manage(), {}) }) { DebugStepContent(Reach.NeedsDebugging(tvId, "Mi TV 4A"), ReachCheck(switchedOff = true), {}) } },
+        Shot("debugstep_not_on_wifi") { SheetOver({ ManageScreen(manage(), {}) }) { DebugStepContent(Reach.WrongNetwork(tvId, "Mi TV 4A"), ReachCheck(onWifi = Seen.NO), {}) } },
+        Shot("debugstep_allow") { SheetOver({ ManageScreen(manage(), {}) }) { DebugStepContent(Reach.AwaitingAllow(tvId, "Mi TV 4A", FINGERPRINT), ReachCheck(asksToAllow = Seen.YES), {}) } },
+        Shot("debugstep_details", 1400.dp) { SheetOver({ ManageScreen(manage(), {}) }) {
+            DebugStepContent(Reach.NeedsDebugging(tvId, "Mi TV 4A"), ReachCheck(Seen.YES, Seen.NO, Seen.NO, Seen.CHECKING, Seen.NO, switchedOff = true, waitedMs = 8_000), {}, initiallyOpen = true)
+        } },
+        Shot("debugstep_stuck", 1500.dp) { SheetOver({ ManageScreen(manage(), {}) }) {
+            DebugStepContent(Reach.NeedsDebugging(tvId, "Mi TV 4A"), ReachCheck(Seen.YES, Seen.YES, Seen.NO, Seen.NO, Seen.NO, switchedOff = true, waitedMs = 34_000), {},
+                details = DetailsUi(copied = true), initiallyOpen = true)
+        } },
+        Shot("debugstep_collecting", 1400.dp) { SheetOver({ ManageScreen(manage(), {}) }) {
+            DebugStepContent(Reach.NeedsDebugging(tvId, "Mi TV 4A"), ReachCheck(Seen.YES, Seen.UNKNOWN, Seen.NO, Seen.NO, Seen.NO, waitedMs = 12_000), {},
+                details = DetailsUi(busy = true), initiallyOpen = true)
+        } },
 
         // The open-run card (R5-W8 O2)
         Shot("openwrite_connection_lost") { SheetOver({ ManageScreen(manage(), {}) }) { OpenWriteContent(openWrite(), {}, {}, {}) } },
@@ -235,6 +309,8 @@ object ManageShots {
         // QA of 0.4.5: the TV changed after we read it (STALE): before any step, and partway through.
         Shot("openwrite_stale_nothing_done") { SheetOver({ ManageScreen(manage(), {}) }) { OpenWriteContent(openWrite(kind = PlanKind.THEME, reason = PauseReason.STALE, nothingDone = true), {}, {}, {}) } },
         Shot("openwrite_stale_partway") { SheetOver({ ManageScreen(manage(), {}) }) { OpenWriteContent(openWrite(kind = PlanKind.THEME, reason = PauseReason.STALE), {}, {}, {}) } },
+        // 0.4.7 (UX finding 19): a look send that paused: "Your look didn't reach the TV", Send it again, Undo.
+        Shot("openwrite_look_failed") { SheetOver({ ManageScreen(manage(), {}) }) { OpenWriteContent(openWrite(kind = PlanKind.THEME, reason = PauseReason.STEP_FAILED), {}, {}, {}) } },
         // 0.4.6: the app a put back switched on took the Home button.
         Shot("openwrite_took_home") { SheetOver({ ManageScreen(manage(), {}) }) { OpenWriteContent(openWrite(kind = PlanKind.PUT_BACK, reason = PauseReason.STEP_FAILED, tookHome = "Android TV Home"), {}, {}, {}) } },
         Shot("openwrite_setup") { SheetOver({ ManageScreen(manage(), {}) }) { OpenWriteContent(openWrite(kind = PlanKind.SETUP), {}, {}, {}) } },
@@ -271,6 +347,8 @@ object ManageShots {
         Shot("appsettings_key_tee", tall) { AppSettingsScreen(appSettings(backing = "TEE"), {}, {}, {}) },
         Shot("appsettings_key_wrapped", tall) { AppSettingsScreen(appSettings(backing = "WRAPPED_SOFTWARE"), {}, {}, {}) },
         Shot("appsettings_licences") { SheetOver({ AppSettingsScreen(appSettings(), {}, {}, {}) }) { LicencesContent() } },
+        Shot("appsettings_details") { SheetOver({ AppSettingsScreen(appSettings(), {}, {}, {}) }) { DetailsContent(DetailsUi(), {}) } },
+        Shot("appsettings_details_copied") { SheetOver({ AppSettingsScreen(appSettings(), {}, {}, {}) }) { DetailsContent(DetailsUi(copied = true), {}) } },
         Shot("appsettings_privacy") { SheetOver({ AppSettingsScreen(appSettings(), {}, {}, {}) }) { PrivacyContent() } },
         Shot("appsettings_reset_key") { SheetOver({ AppSettingsScreen(appSettings(), {}, {}, {}) }) { ConfirmContent(AppConfirm.RESET_KEY, working = false) {} } },
         Shot("appsettings_delete_all") { SheetOver({ AppSettingsScreen(appSettings(), {}, {}, {}) }) { ConfirmContent(AppConfirm.DELETE_EVERYTHING, working = false) {} } },

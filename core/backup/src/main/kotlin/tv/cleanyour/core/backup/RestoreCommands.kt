@@ -56,8 +56,17 @@ class RestoreCommands(private val renderer: OpRenderer) {
         // WP4 (G4): a placeholder SetHome prior (a journal from before 0.4.5) goes back to the stock
         // home the switch armed its watchdog with.
         val stockHome = HomePlaceholder.stockFromRecords(changes)
+        // RFC-HELPER-1: when this app switched accessibility on for the Home button helper (from 0 or
+        // unset), the helper's removal line switches it back off itself, and only when the list it
+        // leaves is empty; the separate accessibility_enabled line would switch it off with other
+        // services still listed, so it is left out.
+        val helperOn = changes.any { it.op == Op.SettingsPut(SettingKey.ACCESSIBILITY_ENABLED, "1") && it.prior?.settingValue != "1" } &&
+            changes.any { it.op is Op.AccessibilityAdd }
         return UndoOrder.undoOrder(lasting).mapNotNull { first ->
             when (val t = UndoOrder.target(first.op)) {
+                // Only an add of ours is put back, by taking that one entry out; a removal never is.
+                is UndoOrder.Target.Helper -> if (first.op is Op.AccessibilityAdd) step(first, gone, helperOn) else null
+                is UndoOrder.Target.Setting -> if (helperOn && t.key == SettingKey.ACCESSIBILITY_ENABLED && first.prior?.settingValue != "1") null else step(first, gone)
                 is UndoOrder.Target.PackageEnabled -> if (t.pkg in gone) null else step(first, gone)
                 is UndoOrder.Target.App -> when {
                     t.pkg !in gone -> step(first, gone)
@@ -86,7 +95,7 @@ class RestoreCommands(private val renderer: OpRenderer) {
         }
     }
 
-    private fun step(change: ChangeRecord, gone: Set<PackageName>): RestoreStep? {
+    private fun step(change: ChangeRecord, gone: Set<PackageName>, helperOn: Boolean = false): RestoreStep? {
         val what = TextSafety.ascii("${describeChange(change.op)} (plan step ${change.step})", 160)
         val prior = change.prior
             ?: return RestoreStep(RestoreStepKind.NOT_FROM_LAPTOP, change, null, what, emptyList(),
@@ -97,7 +106,7 @@ class RestoreCommands(private val renderer: OpRenderer) {
             return RestoreStep(RestoreStepKind.NOT_FROM_LAPTOP, change, null, what, emptyList(),
                 "it would switch accessibility back on, which this app never does; switch it on in the TV's settings if you want it")
         }
-        val inverse = renderer.inverse(change.op, prior)
+        val inverse = renderer.inverse(change.op, prior)?.let { if (it is Op.AccessibilityRemove && helperOn) it.copy(offIfEmpty = true) else it }
             ?: return if (nothingToPutBack(change.op)) null
             else RestoreStep(RestoreStepKind.NOT_FROM_LAPTOP, change, null, what, emptyList(), cannotUndo(change.op))
         if (isTransient(inverse) || packageOf(inverse)?.let { it in gone } == true) return null
@@ -127,7 +136,8 @@ class RestoreCommands(private val renderer: OpRenderer) {
 
         fun isTransient(op: Op): Boolean = when (op) {
             is Op.Read, is Op.VerifyHome, is Op.Settle, is Op.ArmHomeWatchdog, is Op.ConfirmHome, is Op.KillWatchdog,
-            Op.PressHome, is Op.RestartHome, is Op.StartActivity, Op.DebugOff, Op.Reboot, is Op.Mkdir, is Op.CurtainCue -> true
+            Op.PressHome, is Op.RestartHome, is Op.StartActivity, Op.DebugOff, Op.Reboot, is Op.Mkdir, is Op.CurtainCue,
+            is Op.ArmHelperWatchdog -> true
             else -> false
         }
 
@@ -173,6 +183,8 @@ class RestoreCommands(private val renderer: OpRenderer) {
             is Op.SetHome -> "Made ${op.component.flat} the home screen"
             is Op.PushAsset -> "Wrote ${op.dest.absolute}"
             is Op.RemoveFile -> "Deleted ${op.path.absolute}"
+            is Op.AccessibilityAdd -> "Switched on the Home button helper (${op.component.flat})"
+            is Op.AccessibilityRemove -> "Switched off the Home button helper (${op.component.flat})"
             else -> "Ran ${ChangeJson.typeOf(op)}"
         }
 
@@ -184,6 +196,8 @@ class RestoreCommands(private val renderer: OpRenderer) {
             is Op.SettingsPut -> if (op.value == null) "Setting ${op.key.key} back to not set" else "Setting ${op.key.key} back to ${op.value}"
             is Op.SetHome -> "Home screen back to ${op.component.flat}"
             is Op.RemoveFile -> "Delete ${op.path.absolute}"
+            is Op.AccessibilityRemove -> "Take the Home button helper (${op.component.flat}) out of the accessibility list" +
+                if (op.offIfEmpty) ", and switch accessibility off when nothing else is listed" else ""
             else -> describeChange(op)
         }
 

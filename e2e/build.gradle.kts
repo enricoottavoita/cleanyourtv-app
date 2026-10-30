@@ -82,10 +82,26 @@ tasks.register<Test>("emulatorTestTheme") {
         exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
 }
+// RFC-HELPER-1: the Home button helper scenario (S10) alone: ./gradlew :e2e:emulatorTestHelper in a session.
+tasks.register<Test>("emulatorTestHelper") {
+    description = "The Home button helper scenario (S10) alone against a running Android TV emulator."
+    group = "verification"
+    testClassesDirs = emulatorTest.output.classesDirs
+    classpath = emulatorTest.runtimeClasspath
+    filter { includeTestsMatching("tv.cleanyour.e2e.scenarios.S10HomeHelper") }
+    maxParallelForks = 1
+    maxHeapSize = "384m"
+    outputs.upToDateWhen { false }
+    testLogging {
+        events("passed", "skipped", "failed")
+        showStandardStreams = true
+        exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+    }
+}
 // The convention plugin gives every Test task a 5 minute timeout (a hung unit test must not hold
 // the forge lock). A scenario session is longer by design: S05 alone waits up to 10 minutes per
 // scenario. This action is registered after the plugin's, so it wins; the forge session and the
 // nightly job keep their own outer limits (SESSION_TIMEOUT_S, timeout-minutes).
-tasks.withType<Test>().matching { it.name == "emulatorTest" || it.name == "emulatorTestCurtain" || it.name == "emulatorTestTheme" }.configureEach {
+tasks.withType<Test>().matching { it.name == "emulatorTest" || it.name == "emulatorTestCurtain" || it.name == "emulatorTestTheme" || it.name == "emulatorTestHelper" }.configureEach {
     timeout.set(Duration.ofMinutes(35))
 }

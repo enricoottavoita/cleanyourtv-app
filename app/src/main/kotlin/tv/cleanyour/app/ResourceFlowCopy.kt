@@ -57,11 +57,9 @@ class ResourceFlowCopy(context: Context) : FlowCopy {
         CopyKey.STOP_TV_NOT_SUPPORTED_BODY -> ConnectR.string.stop_tv_not_supported_body
         CopyKey.STOP_TV_NOT_SUPPORTED_PRIMARY -> ConnectR.string.stop_tv_not_supported_primary
         CopyKey.STOP_HOME_SETUPWRAITH_TITLE -> SetupR.string.stop_home_setupwraith_title
-        CopyKey.STOP_HOME_SETUPWRAITH_BODY -> SetupR.string.stop_home_setupwraith_body
-        CopyKey.STOP_HOME_SETUPWRAITH_PRIMARY -> SetupR.string.stop_home_setupwraith_primary
         CopyKey.STOP_HOME_SETUPWRAITH_SECONDARY -> SetupR.string.stop_home_setupwraith_secondary
         CopyKey.STOP_HOME_SETUPWRAITH_WIFI_BODY -> SetupR.string.stop_home_setupwraith_wifi_body
-        CopyKey.STOP_HOME_SETUPWRAITH_WIFI_PRIMARY -> SetupR.string.stop_home_setupwraith_wifi_primary
+        CopyKey.STOP_HOME_SETUPWRAITH_WIFI_SECONDARY -> SetupR.string.stop_home_setupwraith_wifi_secondary
         CopyKey.STOP_HOME_SETUPWRAITH_WIFI_UNKNOWN_BODY -> SetupR.string.stop_home_setupwraith_wifi_unknown_body
         CopyKey.STOP_HOME_OTHER_LAUNCHER_TITLE -> SetupR.string.stop_home_other_launcher_title
         CopyKey.STOP_HOME_OTHER_LAUNCHER_BODY -> SetupR.string.stop_home_other_launcher_body

@@ -78,7 +78,18 @@ versionCode 8). The manifest at this commit is the same as at the v3.0.0 tag:
 The core/ops `RendererPropertyTest.noOpApprovesGrantsOrSwitchesOnTheLaunchersHelpers` pins these
 statements: no op renders `cmd notification`, `pm grant`, `WRITE_SECURE_SETTINGS` or a broadcast to
 the launcher, and the only accessibility writes are the two accessibility settings with the op's
-own value, which the planner uses only to put back the list the TV had.
+own value, which the planner uses only to put back the list the TV had, and, in the test build
+only, the Home button helper's lines (the last section).
+
+Since 0.4.7 (RFC-THEME-1) the app writes the look, `config.json` and `wallpaper.jpg`, through the
+launcher's theme provider (`content://com.gathin.tvhome.theme`, exported and guarded by
+`WRITE_SECURE_SETTINGS`, which the ADB shell holds) on Android 10 and later with launcher 2.5 or
+newer, the way upstream's `tools/theme.sh` does: the file is pushed to the app's folder in
+`/data/local/tmp`, `content write` copies it in as the launcher, the staged copy is removed, and the
+check reads it back with `content read` piped to `sha256sum`. A direct copy is the fallback where the
+provider does not answer. These are the renderer's two fixed templates beside the watchdog's
+(core/ops `ThemeProviderLines`), filled only from a two-entry list of file names and covered by
+golden files and the property tests. The provider takes nothing else from this app.
 
 Launcher 2.7 (upstream v2.7.0, commit 3e34f40, versionCode 8; was 2.5, v2.5.0, versionCode 6):
 
@@ -100,7 +111,64 @@ Launcher 2.7 (upstream v2.7.0, commit 3e34f40, versionCode 8; was 2.5, v2.5.0, v
 - `HomeKeyService` is now direct boot aware (it can start before the first unlock), and both key
   services no longer ask for window events: they receive
   key events only, which is less than 2.5 received. `stock_home_redirect` would add window events
-  at run time; this app does not set it.
+  at run time; this app sets it only for the test build's Home button helper (below).
 - Unchanged: the HOME activity, the theme provider (exported, guarded by
   `WRITE_SECURE_SETTINGS`), the screensaver behind `BIND_DREAM_SERVICE`, both key services behind
   `BIND_ACCESSIBILITY_SERVICE`, and the network, Wi-Fi and location permissions.
+
+## The Home button helper (test build only)
+
+Since the 0.4.8 test track, a build made with `-Pcyt.homeHelper=true` can switch on one of the
+bundled launcher's accessibility services, `com.gathin.tvhome/.HomeKeyService`, after the person
+agrees to it in Setup's Customise. A release build bundles no marker for it: its planner refuses
+the helper and no screen offers it. Without that opt-in, everything above holds as written: the
+app never adds a service and never writes `accessibility_enabled 1` unless putting back exactly
+what the TV had.
+
+What it is for: the TV keeps its own home screen (and its setup wizard, so casting and the Wi-Fi
+it saved are not touched), and the helper opens the new home screen whenever the TV's own comes to
+the front.
+
+What the app writes, and nothing else:
+
+- In the launcher's `config.json`: `stock_home_redirect`, the package of the TV's own home screen,
+  which must be Google's (tvlauncher, leanback or launcherx), and `key_filter` false. Not
+  `restore_key_services`, `guard_off_in_standby`, `power_on_home`, `home_long_press_home`,
+  `consume_volume_keys`, `gamepad_passthrough`, `handle_view_inputs` or `app_keys`.
+- `enabled_accessibility_services`: our one entry appended by a compare-and-set on the TV. The TV
+  reads the list and writes it only while it still reads what the phone read; otherwise it writes
+  nothing. Every other entry stays byte for byte and in order. A list of 16 entries, or one the
+  app cannot read safely, is refused.
+- `accessibility_enabled 1` only when accessibility is already on, or when nothing but our entry
+  is listed: switching it on would bind every listed service, someone else's too, so with
+  accessibility off and another service listed the helper is refused.
+- A safety timer during the check, like the home screen switch's watchdog: unless the phone
+  confirms in time, the TV takes our entry out of the list itself and shows its own home screen,
+  so a new home screen that crashes at start cannot keep the TV in a loop of reopening it after
+  the phone has gone.
+
+Switching off (Manage), the check's own rollback, Undo everything and the laptop restore scripts
+take out exactly our entry (in its short or full class form) and nothing else, and switch
+accessibility back off only when this app switched it on and the list is then empty. Undo never
+adds the helper. The renderer accepts no other service for these lines, and none of them writes
+`accessibility_enabled 1`.
+
+What the helper can see: with `stock_home_redirect` set, `HomeKeyService` asks Android for window
+changes, which name the package and class of the activity in front. It does not ask for window
+content (`canRetrieveWindowContent` is not declared), and with `key_filter` false it filters no key,
+so it receives no button presses. The launcher has no INTERNET permission. Android still describes
+any accessibility service as able to see the screen and the buttons pressed; the consent says
+what this one asks for. Side effects of the bound helper: `ProbeActivity` opens once per boot (so
+a home screen drawn before the bind is caught), Launcher settings offer Restart while it is bound,
+and it binds before the first unlock (direct boot aware).
+
+Unchanged and still pinned by the renderer tests: no `pm grant`, no app-ops (so not TCL's
+`AUTO_START`; on TCL firmware with `TclAppBoot` the helper may not survive a restart), no
+notification listener, no broadcast to the launcher, `WRITE_SECURE_SETTINGS` never granted.
+
+Threat notes: the launcher is pinned by SHA-256 and signer; a hostile overlay could already name
+another app's home screen in `stock_home_redirect` (a carried key), so the codec warns on any value
+that is not one of Google's TV home screens, and a later look carries the helper's keys only while
+our entry is listed and only for one of those. A new home screen that crashes in a loop is a local
+denial of service with local escapes: TV Settings > Accessibility > Home button, safe mode, or the
+phone's Manage and Undo.

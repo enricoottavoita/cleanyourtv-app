@@ -12,7 +12,11 @@ import tv.cleanyour.core.planner.PlanRequest
 // M6 Restore point (UX 4.13, F10): Undo everything with its preview, the one outlined danger button
 // inside its confirmation sheet, the credential prompt, narration, and the end line; "Save a copy"
 // as a SAF zip; "Before a factory reset" on Google TV.
-data class UndoPreview(val plan: Plan, val thingsBack: Int, val stockName: String?, val wizardBack: Boolean, val removeLauncher: Boolean)
+// `launcherInstalled` (0.4.7, UX finding 17): the new home screen is on the TV, so the preview asks
+// whether to keep or remove it; on a TV where Setup never installed it there is nothing to ask.
+// `helperOff` (RFC-HELPER-1, 0.4.7-beta1 QA): the undo takes our HomeKeyService out of the TV's list, so the sheet says so.
+data class UndoPreview(val plan: Plan, val thingsBack: Int, val stockName: String?, val wizardBack: Boolean, val removeLauncher: Boolean,
+                       val launcherInstalled: Boolean = true, val helperOff: Boolean = false)
 
 sealed interface RestorePhase {
     data object Idle : RestorePhase
@@ -27,7 +31,9 @@ data class RestorePointState(
     val tvName: String = "",
     val baselineAtMs: Long? = null,
     val latestAtMs: Long? = null,
-    val googleTv: Boolean = false,
+    // 0.4.7 (UX finding 17): "Before a factory reset" only when this app switched the setup wizard
+    // off on this TV (the ledger says so); it was `googleTv`, every Google TV profile, before.
+    val wizardOff: Boolean = false,
     val phase: RestorePhase = RestorePhase.Idle,
     val exporting: Boolean = false,
 )
@@ -50,14 +56,14 @@ class RestorePointMachine(
 ) : Machine<RestorePointState, RestorePointIntent, ManageEffect>(RestorePointState(), scope) {
 
     private val writer = TvWriter(d)
-    private data class Loaded(val name: String, val baseline: Long?, val latest: Long?, val google: Boolean)
+    private data class Loaded(val name: String, val baseline: Long?, val latest: Long?, val wizardOff: Boolean)
     private data class Phase(val p: RestorePhase)
     private data class Exporting(val on: Boolean)
 
     init { scope.launch { load() } }
 
     override fun reduce(state: RestorePointState, event: Any): RestorePointState = when (event) {
-        is Loaded -> state.copy(tvName = event.name, baselineAtMs = event.baseline, latestAtMs = event.latest, googleTv = event.google)
+        is Loaded -> state.copy(tvName = event.name, baselineAtMs = event.baseline, latestAtMs = event.latest, wizardOff = event.wizardOff)
         is Phase -> state.copy(phase = event.p)
         is Exporting -> state.copy(exporting = event.on)
         RestorePointIntent.PreviewUndo -> state.copy(phase = RestorePhase.Previewing)
@@ -85,7 +91,9 @@ class RestorePointMachine(
     private suspend fun load() {
         val tv = d.tv(tvId) ?: return
         val profile = d.profileOf(tv)
-        send(Loaded(tv.nickname, d.snapshots.baseline(tvId)?.takenAtMs, d.snapshots.latest(tvId)?.takenAtMs, profile?.platform == Platform.GOOGLE_TV))
+        val wraith = profile?.setupWraith
+        val wizardOff = profile?.platform == Platform.GOOGLE_TV && wraith != null && wraith in attempt { d.ledger.switchedOffByUs(tvId) }.getOrDefault(emptySet())
+        send(Loaded(tv.nickname, d.snapshots.baseline(tvId)?.takenAtMs, d.snapshots.latest(tvId)?.takenAtMs, wizardOff))
     }
 
     // The inverse is computed from the journals, never from "enable everything disabled", so things
@@ -99,7 +107,9 @@ class RestorePointMachine(
         val wraith = profile?.setupWraith
         val back = plan.steps.count { it.op is Op.Enable || it.op is Op.DefaultState }
         val wizard = wraith != null && plan.steps.any { (it.op as? Op.Enable)?.pkg == wraith }
-        send(Phase(RestorePhase.Preview(UndoPreview(plan, back, stock?.let { d.nameOf(it) }, wizard, removeLauncher), confirming = false)))
+        val installed = d.snapshots.latest(tvId)?.packages?.containsKey(Launcher.pkg) == true || tv?.launcher != null
+        val helper = plan.steps.any { it.op is Op.AccessibilityRemove }
+        send(Phase(RestorePhase.Preview(UndoPreview(plan, back, stock?.let { d.nameOf(it) }, wizard, removeLauncher, installed, helper), confirming = false)))
     }
 
     private suspend fun undoEverything(p: UndoPreview) {

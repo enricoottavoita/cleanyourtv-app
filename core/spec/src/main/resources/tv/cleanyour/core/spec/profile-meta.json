@@ -2319,7 +2319,7 @@
       "liveTv": "com.mediatek.wwtv.tvcenter",
       "setupWraith": "com.google.android.tungsten.setupwraith",
       "quirks": ["HOME_TAKEOVER_SETUPWRAITH"],
-      "neverDisable": ["com.smartdevice.global.service", "com.skyworth.backligthadjust", "com.smartdevice.bleconnectservice", "com.mediatek.wwtv.tvcenter"],
+      "neverDisable": ["com.smartdevice.global.service", "com.skyworth.backligthadjust", "com.smartdevice.bleconnectservice", "com.mediatek.wwtv.tvcenter", "com.smartdevice.dailymanage", "com.smartdevice.dailyshortcut", "com.smartdevice.myapp"],
       "suggestedDock": [],
       "tested": { "by": "hathechi", "firmware": "UKNV.260211.001", "daysLivedWith": null, "rebootTested": false },
       "groups": {
@@ -2332,9 +2332,13 @@
       "packages": {
         "com.smartdevice.recommendation": { "category": "ads", "ask": false },
         "com.smartdevice.leanbacklauncher.customizer": { "category": "other", "ask": true },
-        "com.smartdevice.myapp": { "category": "preloads", "ask": false },
         "com.Smartdevice.emanual": { "category": "preloads", "ask": false },
         "com.google.android.youtube.tvmusic": { "category": "streaming", "ask": true }
+      },
+      "leftOut": {
+        "com.smartdevice.dailymanage": "issue #1378: this list switched it off and the remote's custom (Daily) button stopped working; the owner found it is one of the three packages that handle that button and got the button back by switching them on again",
+        "com.smartdevice.dailyshortcut": "issue #1378: the owner names it as one of the three packages that handle the remote's custom (Daily) button; the other Skyworth lists keep it on as the quick menu and global button receiver",
+        "com.smartdevice.myapp": "issue #1378: this list switched it off and the remote's custom (Daily) button stopped working; the owner found it is one of the three packages that handle that button and got the button back by switching them on again"
       }
     },
     "skyworth-swtv-24na-4k-nf": {

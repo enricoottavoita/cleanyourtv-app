@@ -180,7 +180,37 @@ data class LookDraft(
     // row whose key cannot act in this look is hidden or greyed, never a live toggle that does nothing.
     val actingExtras: LookExtras = LookExtras.DEFAULT,
     val offeredExtras: LookExtras = LookExtras.DEFAULT,
-)
+    // 0.4.8 (beta1 QA): nothing was sent from this phone yet, so the phone cannot say the TV has this draft.
+    val unsent: Boolean = false,
+) {
+    // 0.4.8 (beta1 QA): "Put it on the TV" only when it would change something: the draft differs from what was sent,
+    // it carries a photo the TV does not have, the TV's own settings changed the look, nothing was sent yet, or what was
+    // sent is a 0.4.0 look (the send moves it to the new form, other bytes).
+    val canSend: Boolean get() = changed || newPhoto || tvChanged || unsent || legacyThemeId != null
+}
+
+// 0.4.7: what Customise names the look step's choice by. Before, the row read only the 0.4.0 theme id, so a look
+// with the person's own photo said "Look: Default". Legacy: a 0.4.0 look by its theme id, the wizard draft's or the
+// look's (null: Default, also the
+// Default look of look2, Classic with no picture). Styled: a look2 choice, with the person's photo or a gallery
+// picture (`picture`, its id) or neither.
+sealed interface LookName {
+    data class Legacy(val themeId: String?) : LookName
+    data class Styled(val style: StyleId, val photo: Boolean = false, val picture: String? = null) : LookName
+
+    companion object {
+        fun of(look: LookDraft?, draftThemeId: String?): LookName {
+            // A 0.4.0 look the wizard draft names keeps its name, as before; a look2 choice leaves the draft's id empty.
+            if (look == null || draftThemeId != null) return Legacy(draftThemeId)
+            look.legacyThemeId?.let { return Legacy(it) }
+            return when (val pic = look.picture) {
+                LookPicture.MINE_ID, LookPicture.NEW_ID, LookPicture.EARLIER_ID -> Styled(look.style, photo = true)
+                null, LookPicture.NONE_ID -> if (look.style == StyleId.CLASSIC) Legacy(null) else Styled(look.style)
+                else -> Styled(look.style, picture = pic)
+            }
+        }
+    }
+}
 
 // The parts of a choice the rules read, from a draft or a saved choice: every value concrete.
 // `picture` is a picture id as LookDraft.picture holds it.

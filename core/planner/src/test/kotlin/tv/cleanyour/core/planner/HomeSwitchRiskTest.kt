@@ -123,7 +123,7 @@ class HomeSwitchRiskTest {
     @Test fun theMokaFamilyGetsNoSwitch() {
         val pairs = HomeSwitchRisk.MOKA_PROFILES.flatMap { id -> shipped.getValue(id).match.let { m -> m.devices.map { it to m.brand!! } } }.toSet()
         // The family is what its profiles match on plus the reported sets no profile matches.
-        val reported = setOf("R4_GTV" to "MOKA")
+        val reported = setOf("R4_GTV" to "MOKA", "R3" to "SCBC", "R4" to "SCBC")
         assertEquals(reported, HomeSwitchRisk.MOKA_REPORTED)
         assertEquals(HomeSwitchRisk.MOKA_FAMILY, pairs + reported, "the family is its profiles' pairs plus the reported sets")
         assertTrue(reported.none { it in pairs }, "a reported set with a profile belongs with the profiles")
@@ -164,6 +164,17 @@ class HomeSwitchRiskTest {
         assertEquals(listOf(Risk.BOOT_LOOP.reason), refused(setup(profile = null), snapshot = withFacts(r4g)))
         // Not the device name under another maker.
         assertNull(HomeSwitchRisk.of(facts("R4_GTV", "Acme"), null, noWizard, WizardWifi.NOT_OWNER))
+    }
+
+    // 0.4.7-beta2: the same board under Panasonic and other brands reports the maker SCBC (devices R3
+    // and R4) and gets no switch either, in the test build's R0 for every brand too.
+    @Test fun theScbcBoardsGetNoSwitch() {
+        for (device in listOf("R3", "R4")) {
+            val set = tv.facts.copy(brand = "Panasonic", manufacturer = "SCBC", model = "2KTV-2TH", device = device, sdk = 34)
+            assertTrue(HomeSwitchRisk.isMokaFamily(set), device)
+            assertEquals(Risk.BOOT_LOOP, HomeSwitchRisk.of(set, null, withFacts(set), WizardWifi.NOT_OWNER, anyBrand = true), device)
+        }
+        assertNull(HomeSwitchRisk.of(facts("R4", "Acme"), null, noWizard, WizardWifi.NOT_OWNER))
     }
 
     // The reference TV keeps its switch.
@@ -332,7 +343,8 @@ class HomeSwitchRiskTest {
             assertNull(HomeSwitchRisk::class.java.getResource(HomeSwitchRisk.ANY_BRAND_RESOURCE), "a release build bundles no marker")
         }
         val two = listOf(HomeClaimant(tvlauncher, 2), HomeClaimant(fallback, -1000))
-        for (brand in listOf("Sony", "OnePlus", "Philips", "Mecool", "Skyworth", "Hisense", "realme", "Haier", "TCL")) {
+        // 0.4.7: Hisense on Android 9 (this TV's version) graduated, so it is no longer in this list.
+        for (brand in listOf("Sony", "OnePlus", "Philips", "Mecool", "Skyworth", "realme", "Haier", "TCL")) {
             val f = axso1.copy(brand = brand, manufacturer = brand, model = "unknown", device = "unknown", fingerprint = "$brand/unknown/unknown:11/x")
             for (w in WizardWifi.entries) {
                 val blocked = if (w == WizardWifi.OWNER) Risk.WIZARD_WIFI else Risk.WIZARD_STAYS_ON
@@ -564,5 +576,164 @@ class HomeSwitchRiskTest {
         }
         assertTrue(source.resolveNow(axso2) is ProfileResolution.BrandSureSet, "the AXSO2 on Android 11 has no list in a release")
         releaseRule { assertEquals(listOf(Risk.WIZARD_STAYS_ON.reason), refused(setup(profile = null, choices = choices(wizardWifi = WizardWifi.NOT_OWNER)), snapshot = r0Tv(axso2))) }
+    }
+
+    // 0.4.7: the release's R0 scope is the reviewed GRADUATED table. Its rows are pinned here, so a new row is a
+    // reviewed change of this test too (with its issues in the row's comment and R0-GRADUATION.md).
+    @Test fun theGraduatedTableIsTheReviewedOne() {
+        data class Row(val makers: Set<String>, val sdks: IntRange, val models: Set<String>, val devices: Set<String>, val excluded: Set<String>)
+        assertEquals(listOf(
+            Row(setOf("Xiaomi", "Redmi"), 28..30, emptySet(), emptySet(), emptySet()),
+            Row(setOf("Xiaomi", "Redmi"), 34..34, setOf("MiTV-MZTU1"), emptySet(), emptySet()),
+            Row(setOf("OnePlus"), 30..30, emptySet(), emptySet(), emptySet()),
+            Row(setOf("My"), 30..30, emptySet(), setOf("yeoksam", "shandao", "tokyo"), emptySet()),
+            Row(setOf("Hisense"), 28..28, emptySet(), emptySet(), emptySet()),
+            Row(setOf("Homatics"), 34..34, emptySet(), emptySet(), emptySet()),
+            Row(setOf("MECOOL"), 34..34, emptySet(), emptySet(), emptySet()),
+            Row(setOf("Sony"), 26..26, emptySet(), emptySet(), emptySet()),
+        ), HomeSwitchRisk.GRADUATED.map { Row(it.makers, it.sdks, it.models, it.devices, it.excludedDevices) })
+        for (g in HomeSwitchRisk.GRADUATED) {
+            assertTrue(g.makers.isNotEmpty() && !g.sdks.isEmpty() && g.sdks.first >= 26 && g.why.isNotBlank(), g.toString())
+            // A 0.4.7 row is one Android version: a new version needs its own confirmations.
+            if ("(0.4.7)" in g.why) assertEquals(g.sdks.first, g.sdks.last, g.toString())
+        }
+        // A brand with no row is BRAND, whatever its version.
+        val philips = axso1.copy(brand = "Philips", manufacturer = "TPV", device = "unknown")
+        assertEquals(HomeSwitchRisk.R0Blocker.BRAND, HomeSwitchRisk.r0Blocker(philips, r0Tv(philips), anyBrand = false))
+    }
+
+    // 0.4.7 graduations: a TV of each confirming report (the facts its issue's report printed) meets R0 in the
+    // release rule, and the plan switches with the setup wizard left on, whoever saved the Wi-Fi.
+    private fun graduatedTv(model: String, device: String, sdk: Int, fingerprint: String, brand: String, manufacturer: String) =
+        reported(model, device, sdk, fingerprint, brand = brand, manufacturer = manufacturer)
+    private val confirmedTvs: List<Pair<String, DeviceFacts>> = listOf(
+        "#1505 #868 #1877 #2809" to reported("MiTV-MZTU1", "stepup", 34, "Xiaomi/stepup/stepup:14/UKN1.240806.017/V816.0.26.6.8.3.UZTMBTV:user/release-keys"),
+        "#235 #2420" to graduatedTv("D00", "Dubai", 30, "OnePlus/OnePlusTV/Dubai:11/RTM1.210315.027/2303030058:user/release-keys", "OnePlus", "OnePlus"),
+        "#2360 #2492 #2524" to graduatedTv("C00", "Cebu", 30, "OnePlus/OnePlusTV/Cebu:11/RTM8.240401.135/2408080101:user/release-keys", "OnePlus", "OnePlus"),
+        "#673" to graduatedTv("Android TV", "yeoksam", 30, "My/Alp/yeoksam:11/RTOC.251019.001/14296264:user/release-keys", "My", "My"),
+        "#864 #2367" to graduatedTv("Android TV", "shandao", 30, "My/EMIR/shandao:11/RTM8.240401.031/11776249:user/release-keys", "My", "My"),
+        "#1546" to graduatedTv("Android TV", "tokyo", 30, "My/Aslan/tokyo:11/RTOC.250820.001/13968254:user/release-keys", "My", "My"),
+        "#1388 #2814" to graduatedTv("HiSmart 4K ATV4", "xinhaoshan", 28, "Hisense/xinhaoshan/xinhaoshan:9/PTT1.181214.002/1:user/release-keys", "Hisense", "Hisense"),
+        "#1094 #654" to graduatedTv("Box R 4K Plus", "YYJ", 34, "Homatics/SEI804HM/YYJ:14/UKG3.250803.001/8963:user/release-keys", "Homatics", "SEI Robotics"),
+        "#2396" to graduatedTv("LEAP-S1", "LAS", 34, "MECOOL/HP4035-Mecool/LAS:14/UKG3.240613.001/C1.4.1_20251218:user/release-keys", "MECOOL", "SkyworthDigital"),
+        "#2522" to graduatedTv("4K Android TV Box", "YYC", 34, "MECOOL/HP4414-MECOOL/YYC:14/UKG3.250115.001/C1.2.7_20250822:user/release-keys", "MECOOL", "SkyworthDigital"),
+        "#1219 #1585" to graduatedTv("BRAVIA 4K GB ATV3", "BRAVIA_ATV3_4K", 26, "Sony/BRAVIA_ATV3_4K_EU/BRAVIA_ATV3_4K:8.0.0/OPR2.170623.027.S34/665751:user/release-keys", "Sony", "Sony"),
+    )
+    // The two Android 8 sets reported tvlauncher at priority 0, the others at 2.
+    private fun confirmedTv(f: DeviceFacts, extra: List<HomeClaimant> = emptyList(), home: Component? = tvlauncher): Snapshot =
+        r0Tv(f, listOf(HomeClaimant(tvlauncher, if (f.sdk == 26) 0 else 2), HomeClaimant(fallback, -1000)) + extra, home = home)
+
+    @Test fun eachGraduatedRowCoversItsConfirmingTvs() = releaseRule {
+        for ((issues, f) in confirmedTvs) {
+            val s = confirmedTv(f)
+            assertEquals(1, HomeSwitchRisk.GRADUATED.count { it.covers(f) }, "$issues ${f.model}: one row covers it")
+            assertTrue(HomeSwitchRisk.graduated(f), "$issues ${f.model}")
+            val res = source.resolveNow(f)
+            assertTrue(res !is ProfileResolution.Exact, "$issues ${f.model}: no exact list, so R0 is its path ($res)")
+            assertNull(HomeSwitchRisk.r0Blocker(f, s, anyBrand = false), "$issues ${f.model}")
+            assertTrue(HomeSwitchRisk.wizardStaysOnSafely(f, s, anyBrand = false), "$issues ${f.model}")
+            for (w in WizardWifi.entries) {
+                assertNull(HomeSwitchRisk.of(f, null, s, w, anyBrand = false), "$issues ${f.model} $w")
+                val p = plan(PlanRequest.Setup(res, choices(wizardWifi = w), PlannerFixtures.artifact(), Level.SIMPLE), snapshot = s)
+                val ops = p.steps.map { it.op }
+                assertTrue(Op.Disable(tvlauncher.pkg) in ops && Op.SetHome(PlannerFixtures.launcher) in ops, "$issues ${f.model} $w: the switch")
+                assertTrue(ops.none { (it is Op.Disable && it.pkg == wizard) || (it is Op.Enable && it.pkg == wizard) }, "$issues ${f.model} $w: the wizard is left as it is")
+                assertTrue(ops.none { it is Op.SettingsPut }, "$issues ${f.model} $w: no setting is written")
+            }
+        }
+    }
+
+    // Every incident block applies to a graduated TV as to any other: a vendor service's FallbackHome (VENDOR_HOME,
+    // issue #825), another home screen app (OTHER_HOME), a wizard that claims Home, Google TV's home or no
+    // tvlauncher, a candidate list, the Google hardware and the MOKA family.
+    @Test fun theIncidentBlocksStillApplyToTheGraduatedTvs() = releaseRule {
+        val candidate = PlannerFixtures.profile().copy(tested = TestedInfo("candidate", null, null, rebootTested = false, candidate = true))
+        for ((issues, f) in confirmedTvs) for (w in WizardWifi.entries) {
+            val blocked = if (w == WizardWifi.OWNER) Risk.WIZARD_WIFI else Risk.WIZARD_STAYS_ON
+            val at = "$issues ${f.model} $w"
+            assertEquals(Risk.VENDOR_HOME, HomeSwitchRisk.of(f, null, confirmedTv(f, listOf(HomeClaimant(keyintercept, -999))), w, anyBrand = false), "$at: VENDOR_HOME")
+            assertEquals(Risk.OTHER_HOME, HomeSwitchRisk.of(f, null, confirmedTv(f, listOf(HomeClaimant(Component(PackageName("com.vendor.launcher"), ".Home"), 0))), w, anyBrand = false), "$at: OTHER_HOME")
+            assertEquals(Risk.OTHER_HOME, HomeSwitchRisk.of(f, null, confirmedTv(f, listOf(HomeClaimant(launcherx, 1))), w, anyBrand = false), "$at: launcherx too")
+            assertEquals(blocked, HomeSwitchRisk.of(f, null, confirmedTv(f, listOf(HomeClaimant(recovery, 0))), w, anyBrand = false), "$at: the wizard claims Home")
+            assertEquals(blocked, HomeSwitchRisk.of(f, null, r0Tv(f, listOf(HomeClaimant(launcherx, 2), HomeClaimant(fallback, -1000)), home = launcherx), w, anyBrand = false), "$at: Google TV")
+            assertEquals(blocked, HomeSwitchRisk.of(f, null, r0Tv(f, disabled = setOf(tvlauncher.pkg.value)), w, anyBrand = false), "$at: tvlauncher off")
+            assertEquals(blocked, HomeSwitchRisk.of(f, candidate, confirmedTv(f), w, anyBrand = false), "$at: a candidate list")
+            assertEquals(Risk.BOOT_LOOP, HomeSwitchRisk.of(f.copy(device = "R10G", manufacturer = "MOKA"), null, confirmedTv(f), w, anyBrand = false), "$at: MOKA")
+        }
+        // HELD_OUT keeps the AXSO2 on Android 11 out, next to the new Xiaomi row.
+        val axso2 = reported("MiTV-AXSO2", "dangalUHD", 30, "Xiaomi/dangalUHD/dangalUHD:11/RTT0.211201.001/1150:user/release-keys")
+        assertEquals(HomeSwitchRisk.R0Blocker.SCOPE, HomeSwitchRisk.r0Blocker(axso2, r0Tv(axso2), anyBrand = false))
+        // Google's own hardware keeps CASTING; "google" has no row (its confirmations were the Home button helper's).
+        val chromecast = reported("Chromecast", "sabrina", 34, "google/sabrina_prod_stable/sabrina:14/UTTC.250917.004/14193937:user/release-keys", brand = "google", manufacturer = "Google")
+        assertEquals(Risk.CASTING, HomeSwitchRisk.of(chromecast, null, r0Tv(chromecast), WizardWifi.NOT_OWNER, anyBrand = false))
+        assertEquals(HomeSwitchRisk.R0Blocker.BRAND, HomeSwitchRisk.r0Blocker(chromecast, r0Tv(chromecast), anyBrand = false))
+    }
+
+    // The pairs 0.4.7 does not graduate keep the wizard's rule in a release: TCL on Android 11 and realme on Android
+    // 14 (a failure among their confirmations), the pairs with under 2 R0 confirmations, other models, sets and
+    // Android versions of the graduated brands. The test build keeps R0 for all of them.
+    @Test fun thePairsNotGraduatedStayOffInTheRelease() = releaseRule {
+        val brand = HomeSwitchRisk.R0Blocker.BRAND
+        val scope = HomeSwitchRisk.R0Blocker.SCOPE
+        val off: List<Triple<String, DeviceFacts, HomeSwitchRisk.R0Blocker>> = listOf(
+            Triple("TCL 11 (#1799, #2061, #2082 failed)", graduatedTv("Smart TV", "BeyondTV4", 30, "TCL/G03_4K_US_NF_DB/BeyondTV4:11/RP1A.200622.001/AR26:user/release-keys", "TCL", "TCL"), brand),
+            Triple("TCL 11 G06", graduatedTv("Smart TV", "G06", 30, "TCL/G06/G06:11/RP1A.200622.001/1:user/release-keys", "TCL", "TCL"), brand),
+            Triple("realme 14 (#2126 failed)", graduatedTv("AI PONT", "redwood", 34, "realme/DVB92RM/redwood:14/UKNV.260514.001/15419756:user/release-keys", "realme", "Changhong"), brand),
+            Triple("realme 14 stick", graduatedTv("TV Stick", "BOS", 34, "realme/HP4702-realme/BOS:14/UKG3.250826.001/1:user/release-keys", "realme", "SkyworthDigital"), brand),
+            Triple("Kogan 11", graduatedTv("AI PONT", "samseong", 30, "Kogan/DVB93KG/samseong:11/RTO2.250508.001/13470691:user/release-keys", "Kogan", "Changhong"), brand),
+            Triple("SHARP 11", graduatedTv("AQUOS_TVE19A", "sindang", 30, "SHARP/tcbrae_a/sindang:11/RTOB.250721.001/13808904:user/release-keys", "SHARP", "SHARP"), brand),
+            Triple("SHARP 14", graduatedTv("SHARP 2K EU Android TV", "martin", 34, "SHARP/SHARP_2K_ATV2/martin:14/UKNV.260324.001/15080168:user/release-keys", "SHARP", "Expressluck"), brand),
+            Triple("Strong 14, the MECOOL board", graduatedTv("LEAP-S1", "LAS", 34, "Strong/HP4005/LAS:14/UKG3.240613.001/1:user/release-keys", "Strong", "SkyworthDigital"), brand),
+            Triple("THOMSON 14", graduatedTv("270", "SNA", 34, "THOMSON/Streaming_Box_Plus/SNA:14/URO4.260304.011.B1/15051976:user/release-keys", "THOMSON", "SDMC"), brand),
+            Triple("TiVo Stream 4K, SEI Robotics", graduatedTv("TiVo Stream 4K", "SEI400TV", 31, "eSTREAM4K/SEI400TV/SEI400TV:12/1:user/release-keys", "eSTREAM4K", "SEI Robotics"), brand),
+            Triple("Hisense 11", graduatedTv("HiSmart 2K ATV4", "hamamatsucho", 30, "Hisense/fushan_emeu/hamamatsucho:11/RTO6.230411.001/9924732:user/release-keys", "Hisense", "Hisense"), scope),
+            Triple("Toshiba on Hisense's board, 11", graduatedTv("Smart TV", "hamamatsucho", 30, "Toshiba/hamamatsucho/hamamatsucho:11/1:user/release-keys", "Toshiba", "Hisense"), scope),
+            Triple("OnePlus's JMGO on 14", graduatedTv("H80A", "songni", 34, "JMGO/songni/songni:14/1:user/release-keys", "JMGO", "OnePlus"), scope),
+            Triple("OnePlus on 12", graduatedTv("C00", "Cebu", 31, "OnePlus/OnePlusTV/Cebu:12/1:user/release-keys", "OnePlus", "OnePlus"), scope),
+            Triple("My on 14", graduatedTv("Android TV", "finch", 34, "My/finch/finch:14/1:user/release-keys", "My", "vestel"), scope),
+            Triple("My on 11, another set", graduatedTv("Android TV", "finch", 30, "My/finch/finch:11/1:user/release-keys", "My", "My"), scope),
+            Triple("My on 9", graduatedTv("Android TV", "yeoksam", 28, "My/Horizon/yeoksam:9/1:user/release-keys", "My", "My"), scope),
+            Triple("Hisense on 10", graduatedTv("HiSmart 4K ATV4", "xinhaoshan", 29, "Hisense/xinhaoshan/xinhaoshan:10/1:user/release-keys", "Hisense", "Hisense"), scope),
+            Triple("Homatics on 12", graduatedTv("Box R 4K Plus", "YYJ", 31, "Homatics/SEI804HM/YYJ:12/1:user/release-keys", "Homatics", "SEI Robotics"), scope),
+            Triple("MECOOL on 11", graduatedTv("KM2", "deadpool", 30, "MECOOL/KM2/deadpool:11/1:user/release-keys", "MECOOL", "SkyworthDigital"), scope),
+            Triple("Sony on 10 (#586, 1 of 2)", graduatedTv("BRAVIA 4K UR3", "BRAVIA_UR3", 29, "Sony/BRAVIA_UR3/BRAVIA_UR3:10/1:user/release-keys", "Sony", "Sony"), scope),
+            Triple("Xiaomi 14, another model (#884, the helper)", reported("MiTV-MOOR2", "venom", 34, "Xiaomi/venom/venom:14/1:user/release-keys"), scope),
+            Triple("Xiaomi 12 (#1273 failed)", reported("MIBOX4", "oneday", 31, "Xiaomi/oneday/oneday:12/1:user/release-keys"), scope),
+            Triple("Xiaomi 13, the MZTU1's model", reported("MiTV-MZTU1", "stepup", 33, "Xiaomi/stepup/stepup:13/1:user/release-keys"), scope),
+        )
+        for ((why, f, blocker) in off) {
+            assertTrue(!HomeSwitchRisk.graduated(f), why)
+            val s = confirmedTv(f)
+            assertEquals(blocker, HomeSwitchRisk.r0Blocker(f, s, anyBrand = false), why)
+            assertNull(HomeSwitchRisk.r0Blocker(f, s, anyBrand = true), "$why: the test build keeps R0")
+            for (w in WizardWifi.entries) {
+                val blocked = if (w == WizardWifi.OWNER) Risk.WIZARD_WIFI else Risk.WIZARD_STAYS_ON
+                assertEquals(blocked, HomeSwitchRisk.of(f, null, s, w, anyBrand = false), "$why $w")
+            }
+            assertEquals(listOf(Risk.WIZARD_STAYS_ON.reason), refused(setup(profile = null, choices = choices(wizardWifi = WizardWifi.NOT_OWNER)), snapshot = s), why)
+        }
+    }
+
+    // A row's optional parts: only some models, and sets held out by device; brand or manufacturer, case ignored.
+    @Test fun aGraduatedRowCoversItsMakersVersionsAndModelsOnly() {
+        val row = HomeSwitchRisk.Graduated(setOf("Xiaomi"), 34..34, models = setOf("MiTV-MZTU1"), excludedDevices = setOf("held"), why = "test")
+        val mztu1 = reported("MiTV-MZTU1", "stepup", 34, "Xiaomi/stepup/stepup:14/UKN1/1:user/release-keys")
+        assertTrue(row.covers(mztu1))
+        assertTrue(row.covers(mztu1.copy(model = "mitv-mztu1", brand = "xiaomi")))
+        assertTrue(row.covers(mztu1.copy(brand = "Redmi")), "the manufacturer is enough")
+        assertTrue(!row.covers(mztu1.copy(sdk = 33)))
+        assertTrue(!row.covers(mztu1.copy(model = "MiTV-MZTU2")))
+        assertTrue(!row.covers(mztu1.copy(device = "Held")))
+        assertTrue(!row.covers(mztu1.copy(brand = "Sony", manufacturer = "Sony")))
+        val anyModel = row.copy(models = emptySet())
+        assertTrue(anyModel.covers(mztu1.copy(model = "MiTV-MZTU2")))
+        // 0.4.7: only some sets, by device, case ignored.
+        val bySet = HomeSwitchRisk.Graduated(setOf("My"), 30..30, devices = setOf("shandao"), why = "test")
+        val shandao = mztu1.copy(brand = "My", manufacturer = "My", model = "Android TV", device = "shandao", sdk = 30)
+        assertTrue(bySet.covers(shandao))
+        assertTrue(bySet.covers(shandao.copy(device = "SHANDAO")))
+        assertTrue(!bySet.covers(shandao.copy(device = "finch")))
+        assertTrue(!bySet.covers(shandao.copy(sdk = 34)))
+        assertTrue(!bySet.copy(excludedDevices = setOf("shandao")).covers(shandao), "a set held out stays out")
     }
 }

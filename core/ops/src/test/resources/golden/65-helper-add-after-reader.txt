@@ -1,0 +1,12 @@
+# Home button helper: appended after a screen reader, compare-and-set
+op: AccessibilityAdd expected=com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService component=com.gathin.tvhome/.HomeKeyService
+privilege: TAKEOVER
+timeout_ms: 30000
+stdout_cap: 65536
+line: c=$(settings get secure enabled_accessibility_services); if [ "$c" = 'com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService' ]; then settings put secure enabled_accessibility_services 'com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService:com.gathin.tvhome/.HomeKeyService'; else echo 'cleanyourtv: the accessibility list changed since it was read' >&2; exit 3; fi
+transfer: none
+verify: Read kind=SETTINGS ns=SECURE
+verify_line: 'settings' 'list' 'secure'
+prior: settingValue=com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService
+inverse: AccessibilityRemove expected=null component=com.gathin.tvhome/.HomeKeyService offIfEmpty=false
+inverse_line: c=$(settings get secure enabled_accessibility_services); n=$(echo ":$c:" | sed -E "s#:com[.]gathin[.]tvhome/(com[.]gathin[.]tvhome)?[.]HomeKeyService:#:#g;s#:com[.]gathin[.]tvhome/(com[.]gathin[.]tvhome)?[.]HomeKeyService:#:#g;s#^:##;s#:\$##"); if [ "$n" != "$c" ]; then if [ -z "$n" ]; then settings delete secure enabled_accessibility_services; else settings put secure enabled_accessibility_services "$n"; fi; fi

@@ -35,8 +35,13 @@ import tv.cleanyour.core.store.DocumentStore
 
 // The app and the phone the report comes from; the app fills it from its versionName, its store
 // flavour and android.os.Build.
-data class AppAbout(val version: String, val flavour: String, val phone: String, val phoneAndroid: String) {
+// 0.4.8: `testBuild`, a build with any of the test switches (candidate lists, R0 for any brand, the Home button helper),
+// for the confirmation's "Build kind" line; the graduation rule counts test builds.
+data class AppAbout(val version: String, val flavour: String, val phone: String, val phoneAndroid: String, val testBuild: Boolean = false) {
     val appLine: String get() = "$version ($flavour)"
+    val buildKind: String get() = if (testBuild) "test build" else "release"
+    // "0.4.8 (github, test build)": what counted a restart (RestartTally.build).
+    val countLine: String get() = "$version ($flavour, $buildKind)"
     val phoneLine: String get() = listOf(phone, phoneAndroid).filter { it.isNotBlank() }.joinToString(", ").ifEmpty { "unknown" }
 }
 
@@ -47,9 +52,12 @@ data class AppAbout(val version: String, val flavour: String, val phone: String,
 // word and is not made again until Setup runs again, so after an update that brought the TV a list
 // (or a rule that changed), Manage's report said "blocked WIZARD_STAYS_ON" beside "Profile: exact"
 // and the Home screen page said we did not know the TV. `earlier` tells such a decision.
+// RFC-HELPER-1 (test build): `redirect`, the Home button helper was planned instead of the switch
+// (decision.txt "home=redirect", the report's "Home switch: redirect").
 data class HomeDecision(val planned: Boolean, val block: String? = null, val alreadyOn: Boolean = false,
-                        val app: String? = null, val profile: String? = null) {
+                        val app: String? = null, val profile: String? = null, val redirect: Boolean = false) {
     val line: String get() = when {
+        redirect -> "home switch redirect"
         planned -> "home switch planned"
         block != null -> "home switch blocked $block"
         alreadyOn -> "home switch not needed (the new home screen is on)"
@@ -74,7 +82,8 @@ data class HomeDecision(val planned: Boolean, val block: String? = null, val alr
         val KEEPS_ITS_LINE: Set<HomeBlock> = setOf(HomeBlock.TV_REFUSES, HomeBlock.OLD_ANDROID, HomeBlock.BOOT_LOOP, HomeBlock.CASTING,
             HomeBlock.REMOTE_BUTTONS, HomeBlock.HOME_CHANGED, HomeBlock.VENDOR_HOME)
 
-        fun of(block: HomeBlock, planHasSwitch: Boolean, alreadyOn: Boolean, app: String? = null, profile: String? = null): HomeDecision = when {
+        fun of(block: HomeBlock, planHasSwitch: Boolean, alreadyOn: Boolean, app: String? = null, profile: String? = null, redirect: Boolean = false): HomeDecision = when {
+            redirect -> HomeDecision(false, app = app, profile = profile, redirect = true)
             block != HomeBlock.NONE -> HomeDecision(false, block.name, app = app, profile = profile)
             planHasSwitch -> HomeDecision(true, app = app, profile = profile)
             else -> HomeDecision(false, alreadyOn = alreadyOn, app = app, profile = profile)
@@ -89,6 +98,7 @@ class HomeDecisions(private val store: DocumentStore) {
 
     suspend fun save(id: TvId, d: HomeDecision) {
         val v = when {
+            d.redirect -> "redirect"
             d.planned -> "planned"
             d.block != null -> "blocked:${d.block}"
             d.alreadyOn -> "on"
@@ -110,6 +120,7 @@ class HomeDecisions(private val store: DocumentStore) {
             v == "planned" -> HomeDecision(true)
             v.startsWith("blocked:") -> v.removePrefix("blocked:").takeIf { b -> HomeBlock.entries.any { it.name == b } }?.let { HomeDecision(false, it) }
             v == "on" -> HomeDecision(false, alreadyOn = true)
+            v == "redirect" -> HomeDecision(false, redirect = true)
             v == "none" -> HomeDecision(false)
             else -> null
         }
@@ -126,7 +137,18 @@ data class TvReportInput(
     val switchedOffByApp: Set<PackageName> = emptySet(),
     // beta3: the home decision is an earlier Setup's (HomeDecision.earlier), so the line says so.
     val homeEarlier: Boolean = false,
+    // 0.4.7: Manage's last connect found the TV's own home screen, which this app switched off, claiming Home again
+    // (StockHomeBack: XGIMI's remote buttons switch launcherx back on).
+    val stockHomeBack: Boolean = false,
+    // RFC-HELPER-1 (test build): the Accessibility section (PLAN 4.7); off in a release build.
+    val accessibility: Boolean = tv.cleanyour.core.planner.HomeHelper.BUILD_ON,
+    // 0.4.8: what this phone counted across the TV's restarts (Restarts), for every report of a TV it switched.
+    val restarts: RestartFacts? = null,
 )
+
+// 0.4.8: the restart count as a report says it: the home path, held and failed, when, which app counted, and the
+// look's route (the last look this app sent: by the launcher's ThemeProvider, a sync push, or none).
+data class RestartFacts(val path: HomePath, val tally: RestartTally, val lookRoute: String)
 
 object TvReport {
     private val DAY = DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneOffset.UTC)
@@ -171,7 +193,7 @@ object TvReport {
         if (input != null) appendTv(input, Packages.NONE, names) else { appendLine(); appendLine("TV: none read yet") }
         appendLine()
         appendLine("Diagnostics log (addresses, serial numbers, keys and codes removed)")
-        append(if (context?.connect == true) log.trimEnd().lines().joinToString("\n") { ConnectErrorSummary.redact(it) } else log.trimEnd())
+        append(if (context?.connect == true) log.trimEnd().lines().joinToString("\n") { ConnectErrorSummary.redact(it, about.version) } else log.trimEnd())
     }.trimEnd() + "\n"
 
     // One value from a card, on one line, at most `max` characters, masked twice.
@@ -194,8 +216,86 @@ object TvReport {
         }
     }
 
+    // RFC-HELPER-1 (PLAN 4.7): what the TV says about the Home button helper, from the snapshot's two
+    // settings and the overlay. Other services are only counted, never named, as the person's apps.
+    // Bound or not is not read (no dumpsys accessibility): "listed" and "Switched on" stand for it.
+    private fun StringBuilder.appendAccessibility(s: Snapshot) {
+        val list = tv.cleanyour.core.planner.HomeHelper.list(s)
+        val listed = tv.cleanyour.core.ops.HelperLines.listed(list)
+        val entries = tv.cleanyour.core.ops.HelperLines.entries(list)
+        val others = tv.cleanyour.core.ops.HelperLines.others(list).size
+        val doc = s.launcherOverlay?.let { (tv.cleanyour.core.spec.LauncherConfigCodec.decode(it) as? tv.cleanyour.core.spec.DecodeResult.Ok)?.doc }
+        val redirect = doc?.let { tv.cleanyour.core.spec.HomeHelperKeys.redirectOf(it) }
+        val keyFilter = doc?.let { tv.cleanyour.core.spec.HomeHelperKeys.keyFilterOf(it) }
+        val on = s.settings[tv.cleanyour.core.model.SettingKey.ACCESSIBILITY_ENABLED]
+        appendLine()
+        appendLine("Accessibility")
+        appendLine("Switched on: ${when (on) { "1" -> "yes"; "0" -> "no"; else -> "unknown" }}")
+        appendLine("Services listed: " + when {
+            entries.isEmpty() -> "none"
+            listed -> "${entries.size} (the new home screen's Home button helper, $others other, not named)"
+            else -> "${entries.size} (not named)"
+        })
+        appendLine("Home button helper: " + when {
+            listed && on == "1" -> "listed, accessibility on"
+            listed -> "listed, accessibility off"
+            else -> "not listed"
+        })
+        appendLine("Home redirect: ${redirect?.value ?: "none"}")
+        appendLine("Key filter: ${when (keyFilter) { false -> "off"; true -> "on"; null -> "the launcher's default" }}")
+        appendLine("Button map: ${doc?.appKeys?.size?.takeIf { it > 0 }?.let { "$it buttons" } ?: "none"}")
+    }
+
+    // 0.4.8: the restart count (Restarts), the same lines in a problem report as in the confirmation (ItWorked). The
+    // issue bot reads "Held:" and "Failed:" (research/release-0.4.8/CONFIRMATION-FORMAT.md); dates are UTC days.
+    private fun StringBuilder.appendRestarts(r: RestartFacts) {
+        val t = r.tally
+        appendLine()
+        appendLine("Restarts")
+        appendLine("Home path: ${r.path.word}")
+        appendLine("Held: ${t.held}")
+        appendLine("Failed: ${t.failed}")
+        appendLine("Last restart: ${when { t.counted == 0 -> "none counted yet"; t.lastFailed -> "failed"; else -> "held" }}")
+        appendLine("First counted: ${t.firstAtMs?.let { DAY.format(Instant.ofEpochMilli(it)) } ?: "none"}")
+        appendLine("Last counted: ${t.lastAtMs?.let { DAY.format(Instant.ofEpochMilli(it)) } ?: "none"}")
+        appendLine("Counted by: ${t.build?.let { own(it) } ?: "none"}")
+        appendLine("Look route: ${r.lookRoute}")
+        appendLine("Checked: ${if (r.path == HomePath.HELPER) "boot_id and Home only (the helper's service is not read)" else "boot_id and Home only"}")
+    }
+
+    // 0.4.8 (PLAN item 2): "Tell us it worked", the confirmation the issue bot counts. A fixed block of the app, the
+    // build kind, the phone, the TV's facts, how its home screen resolved and the restart count; no package list, no
+    // log, and nothing the problem report leaves out either (no serial, no id, no name, no address, no Wi-Fi, no key).
+    // The format is research/release-0.4.8/CONFIRMATION-FORMAT.md; change both together.
+    fun confirmation(about: AppAbout, input: TvReportInput, restarts: RestartFacts): String = buildString {
+        val s = input.snapshot
+        val f = s.facts
+        appendLine("Clean Your TV: confirmation")
+        appendLine("Format: ${ItWorked.FORMAT}")
+        appendHeaderOnly(about)
+        appendLine("Build kind: ${about.buildKind}")
+        appendLine("Phone: ${v(about.phoneLine)}")
+        appendLine()
+        appendLine("TV")
+        appendLine("Brand: ${v(f.brand)}")
+        appendLine("Manufacturer: ${v(f.manufacturer)}")
+        appendLine("Model: ${v(f.model)}")
+        appendLine("Device: ${v(f.device)}")
+        appendLine("Android: ${v(f.release)} (SDK ${f.sdk})")
+        appendLine("Build: ${Scrub.text(oneLine(f.fingerprint), codes = false).ifEmpty { "unknown" }}")
+        appendLine()
+        appendLine("Home screen")
+        appendLine("Profile: ${LogCodes.profile(input.profile)}")
+        appendLine("Home switch: ${input.home?.line?.removePrefix("home switch ") ?: "not recorded"}")
+        appendRestarts(restarts)
+    }.trimEnd() + "\n"
+
+    private fun StringBuilder.appendHeaderOnly(about: AppAbout) {
+        appendLine("App: ${own(about.appLine)}")
+    }
+
     private fun StringBuilder.appendHeader(about: AppAbout) {
-        appendLine("App: ${v(about.appLine)}")
+        appendLine("App: ${own(about.appLine)}")
         appendLine("Phone: ${v(about.phoneLine)}")
     }
 
@@ -229,6 +329,14 @@ object TvReport {
         )
         if (claimants.isEmpty()) appendLine("Claimants: none")
         for (c in claimants) appendLine("Claimant: ${named(s, c.component)} priority ${c.priority}")
+        if (input.stockHomeBack) appendLine("Since then: the TV's own home screen, switched off by this app, is on again and claims Home")
+        // Only when the probe read either setting or the overlay names a redirect: a report from a
+        // snapshot that knows nothing about accessibility stays as it was.
+        if (input.accessibility && (tv.cleanyour.core.model.SettingKey.ENABLED_ACCESSIBILITY in s.settings ||
+                tv.cleanyour.core.model.SettingKey.ACCESSIBILITY_ENABLED in s.settings || tv.cleanyour.core.spec.HomeHelperKeys.redirectOf(s.launcherOverlay) != null)) {
+            appendAccessibility(s)
+        }
+        input.restarts?.let { appendRestarts(it) }
         val system = s.packages.filter { it.value.system }.toSortedMap(compareBy { it.value })
         val others = s.packages.size - system.size
         appendLine()
@@ -281,7 +389,7 @@ object TvReport {
     // beta3: " (from an earlier Setup: 0.3.7, brand set TCL)", or without the version and list when
     // the decision is older than beta3 and names neither.
     private fun earlierNote(d: HomeDecision?): String {
-        val with = listOfNotNull(d?.app?.let { v(it) }, d?.profile?.let { v(it) })
+        val with = listOfNotNull(d?.app?.let { own(it) }, d?.profile?.let { v(it) })
         return " (from an earlier Setup${if (with.isEmpty()) "" else ": " + with.joinToString(", ")})"
     }
 
@@ -340,6 +448,10 @@ object TvReport {
     // A TV-provided value, on one line, masked (LogCodes.clean) and never empty.
     private fun v(s: String): String = LogCodes.clean(s, 120).ifEmpty { "unknown" }
 
+    // The app's own words about a build ("0.4.6.1 (full)"): `v` took a four-part version for an
+    // address, so its version is kept as it is and the rest masked like a TV's value (OwnVersion).
+    private fun own(s: String): String = OwnVersion.field(s) { v(it) }.ifEmpty { "unknown" }
+
     // The home screen the TV came with, for the tv_support form's "platform" field, from the TV's own
     // packages and facts (never from a profile: the TVs that need a report have none). A guess, so
     // the form lets the person change it.
@@ -391,6 +503,9 @@ object TvReport {
 // report is all or nothing, never cut.
 object IssueLinks {
     const val REPO = "https://github.com/udhaykumarbala/cleanyourtv-app"
+    // 0.4.7: the TV list page, which TVs get the new home screen now, in the test build, soon, the
+    // clean-up only (and why) or not at all.
+    const val TV_LIST = "https://udhaykumarbala.github.io/cleanyourtv-app/tvs/"
     const val MAX_VALUE = 200
     // 0.4.6: GitHub answers HTTP 500 once the link and the request headers together pass about
     // 6,875 bytes (measured 2026-10-27: a bare request with a 6,900 character link works and 6,920
@@ -429,6 +544,17 @@ object IssueLinks {
         input?.let { "tv" to "${TvReport.tvName(it.snapshot)}, ${TvReport.androidLine(it.snapshot)} (${TvReport.platformOf(it.snapshot)})" },
         context?.let { "what" to what(it, redact) },
     ), PROBLEM_REPORT_FIELD, report)
+
+    // 0.4.8: "Tell us it worked", the confirmation form (.github/ISSUE_TEMPLATE/confirmation.yml) with its title and the
+    // block (TvReport.confirmation) in its one box. The block is short (about 700 characters), well inside MAX_URL.
+    const val CONFIRMATION_FIELD = "confirmation"
+
+    fun confirmation(input: TvReportInput, block: String): Link = link("confirmation.yml", listOf(
+        "title" to confirmationTitle(input),
+    ), CONFIRMATION_FIELD, block)
+
+    // "Confirmation: Xiaomi MiTV-AXSO0 (dangal, Android 9)": the same TV key as a problem's title (TvReport.tvKey).
+    fun confirmationTitle(input: TvReportInput): String = "${ItWorked.TITLE_PREFIX}${TvReport.tvKey(input.snapshot)}"
 
     fun problemTitle(input: TvReportInput?, context: ReportContext? = null, redact: (String) -> String = { it }): String = when {
         context?.connect == true -> "Problem: could not connect (${TvReport.said(context.error ?: "unknown", redact, 60)})"

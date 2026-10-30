@@ -82,6 +82,18 @@ private val themes = listOf(
     ThemeOption("six-columns", "Six columns", "Six apps across, so more fit on the screen."),
 )
 
+// A 16:9 PNG of a TV home screen: a dark wall and four tiles, for "This is your TV now".
+private fun tvShot(): ByteArray {
+    val bmp = android.graphics.Bitmap.createBitmap(640, 360, android.graphics.Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(bmp)
+    canvas.drawColor(0xFF0B1E3A.toInt())
+    val paint = android.graphics.Paint().apply { color = 0xFF3A6FB0.toInt() }
+    repeat(4) { i -> canvas.drawRoundRect(android.graphics.RectF(70f + i * 130f, 220f, 180f + i * 130f, 320f), 16f, 16f, paint) }
+    val out = java.io.ByteArrayOutputStream()
+    bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+    return out.toByteArray()
+}
+
 private fun home(
     themeId: String? = null, drift: Boolean = false, busy: Busy? = null, stock: Boolean = true, ours: Boolean = true, dock: List<AppChoice> = defaultDock,
     updateTo: String? = null, endedLook: String? = null,
@@ -154,11 +166,18 @@ object LauncherShots {
         Shot("home_busy_working") { HomeScreen(home(busy = Busy.Working(40, listOf("Updating the home screen on the TV..."))), {}, {}) },
         Shot("home_no_stock_launcher") { HomeScreen(home(stock = false), {}, {}) },
         Shot("home_stock_already_in_use") { HomeScreen(home(ours = false), {}, {}) },
+        // 0.4.8 (beta1 QA): the helper switched off, the TV's own home screen is Home: no "Use the TV's own home screen".
+        Shot("home_stock_is_home") { HomeScreen(home().copy(stockIsHome = true, helper = tv.cleanyour.core.flows.HelperCard(tv.cleanyour.core.flows.HelperShown.REDIRECT_ONLY, googleTv = false)), {}, {}) },
+        // 0.4.8 (PLAN item 3): "This is your TV now" after a look went to the TV.
+        Shot("home_tv_now", 1100.dp) { HomeScreen(home().copy(lookShot = remember { tvShot() }), {}, {}) },
         Shot("home_empty_dock") { HomeScreen(home(dock = emptyList()), {}, {}) },
         Shot("home_dock_rows") { HomeScreen(home(dock = rowsDock), {}, {}) },
         Shot("home_update_available") { HomeScreen(home(updateTo = "2.4"), {}, {}) },
         // Issue #275: TCL Google TV, the remote buttons the new home screen loses and the way back.
         Shot("home_tcl_remote_keys") { HomeScreen(home().copy(tvName = "TCL 55C755", tclRemoteKeys = true), {}, {}) },
+        // RFC-HELPER-1 (test build): the Home button helper's card, on (a Google TV) and switched off by the TV.
+        Shot("home_helper_on") { HomeScreen(home().copy(helper = tv.cleanyour.core.flows.HelperCard(tv.cleanyour.core.flows.HelperShown.ON, googleTv = true)), {}, {}) },
+        Shot("home_helper_off_by_tv") { HomeScreen(home().copy(helper = tv.cleanyour.core.flows.HelperCard(tv.cleanyour.core.flows.HelperShown.OFF_BY_TV, googleTv = false)), {}, {}) },
         // 0.4.0: a dated look ended; the earlier one is the TV's again, one tap puts it back.
         Shot("home_look_ended") { HomeScreen(home(themeId = "aurora", endedLook = "Diwali"), {}, {}) },
         // 0.3.3 D2 (issue #3): the new home screen isn't on the TV. Why, and the next step when there is one.
@@ -173,6 +192,14 @@ object LauncherShots {
         // beta4 (issue #945): PatchWall stays on while its feeds are off, not by this app.
         Shot("home_not_on_tv_patchwall_feeds") { HomeScreen(notOnTv(NotOnTv(HomeBlock.PATCHWALL_FEEDS, "Xiaomi", setupAgain = true), "Xiaomi MiTV-AXSO2"), {}, {}) },
         Shot("home_not_on_tv_earlier") { HomeScreen(notOnTv(NotOnTv(HomeBlock.WIZARD_STAYS_ON, "TCL", setupAgain = true, earlier = true), "TCL Percee TV"), {}, {}) },
+        // 0.4.7 (UX finding 8): installed but not in use, after a failed switch: Try the switch again.
+        Shot("home_not_on_tv_installed") { HomeScreen(notOnTv(NotOnTv(null, "Xiaomi", setupAgain = true, installed = true), "Mi TV 4A"), {}, {}) },
+        // 0.4.7 (PM 6): a designed outcome says so and shows the TV list before Report a problem.
+        Shot("home_not_on_tv_casting", 900.dp) { HomeScreen(notOnTv(NotOnTv(HomeBlock.CASTING, "Google"), "Google TV Streamer"), {}, {}) },
+        // 0.4.7 (must 4): the report sent before, on an unlisted TV.
+        Shot("home_not_on_tv_report_sent", 900.dp) {
+            HomeScreen(notOnTv(NotOnTv(HomeBlock.WIZARD_STAYS_ON, "Hisense", unlisted = true, helpAddTv = true, reportSentAtMs = Samples.NOW_MS - 86_400_000), "Hisense 32A4200G"), {}, {})
+        },
 
         // look2 Home: the Look row with its mini of what was last sent; a failed send kept for Open Look.
         Shot("home_look_row_mini") { HomeScreen(home().copy(sent = LookFixtures.preview(StyleId.GLASS), sentStyle = StyleId.GLASS, sentPicture = "mist",
@@ -180,6 +207,8 @@ object LauncherShots {
         Shot("look_failed_kept") { HomeScreen(lookSheet(LookFixtures.draft(changed = true)) { it.copy(lookFailed = true, look = it.look) }, {}, {}) },
         // look2 Look sheet: the three pages, the states of spec W2 to W12.
         Shot("look_main", 1100.dp) { LookShot(lookSheet(LookFixtures.draft())) },
+        // 0.4.8 (beta1 QA): opened with nothing changed, the TV has it: no "Put it on the TV".
+        Shot("look_main_nothing_changed", 1100.dp) { LookShot(lookSheet(LookFixtures.draft(canSend = false))) },
         Shot("look_main_changed", 1100.dp) {
             LookShot(lookSheet(LookFixtures.draft(StyleId.GLASS, columns = 7, wayBack = WayBack.UNDO, changed = true, tvChanged = true)))
         },

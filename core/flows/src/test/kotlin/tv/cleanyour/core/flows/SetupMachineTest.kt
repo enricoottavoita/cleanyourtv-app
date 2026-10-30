@@ -31,6 +31,7 @@ import tv.cleanyour.core.planner.PlanRequest
 import tv.cleanyour.core.planner.PlanResult
 import tv.cleanyour.core.planner.WizardWifi
 import tv.cleanyour.core.probe.SavedWifi
+import tv.cleanyour.core.spec.LiveTvKeys
 import tv.cleanyour.core.spec.LookKeys
 import tv.cleanyour.core.spec.Movement
 import tv.cleanyour.core.spec.PictureKeys
@@ -878,10 +879,13 @@ class SetupMachineTest {
         // RFC-CARDS-1: module_cards is always written, off on a first Setup. 0.4.0: fill_dock false.
         // look2: Setup sends the new form; a TV never customised has Setup's Default look (Classic,
         // no picture, 4 apps in a row), and this 1 GB TV gets Quick movement.
-        fun expected(dock: List<PackageName>) = LauncherConfigCodec.encode(LookKeys.build(LookKeys.spec(StyleId.CLASSIC, movement = Movement.QUICK),
-            PictureKeys(false, "#000000", 0, 0), 4, dock, cards = false))
+        // 0.4.7: fill_dock true for the dock Setup picked, false once the person sets one; the TV's
+        // Live TV app (Samples' com.android.tv) in both.
+        fun expected(dock: List<PackageName>, picked: Boolean = false) = LauncherConfigCodec.encode(LiveTvKeys.apply(
+            LookKeys.build(LookKeys.spec(StyleId.CLASSIC, movement = Movement.QUICK), PictureKeys(false, "#000000", 0, 0), 4, dock, cards = false)
+                .let { if (picked) it.copy(fillDock = true) else it }, PackageName("com.android.tv")))
         // The first plan: the picked dock on Setup's Default look.
-        val first = expected(listOf(PackageName("com.netflix.ninja")))
+        val first = expected(listOf(PackageName("com.netflix.ninja")), picked = true)
         assertEquals(first.decodeToString(), h.blobs.bytes(assertNotNull(last().config)).decodeToString())
         assertNull(last().wallpaper)
         // A look and a dock with a row under it: one config.json with both. Aurora migrates to

@@ -125,7 +125,8 @@ class Harness(val clock: FakeClock = FakeClock(Samples.NOW_MS), val facts: tv.cl
                   about: AppAbout? = null, connectDetail: () -> String? = { null },
                   themes: tv.cleanyour.core.spec.ThemeSource = this.themes,
                   sessions: tv.cleanyour.core.session.SessionManager = this.sessions,
-                  wrongFocus: (tv.cleanyour.core.model.TvId) -> tv.cleanyour.core.model.Component? = { null }) = SetupDeps(
+                  wrongFocus: (tv.cleanyour.core.model.TvId) -> tv.cleanyour.core.model.Component? = { null },
+                  homeHelper: Boolean = false) = SetupDeps(
         discovery, sessions, prober, profiles, facts, runner, engine, gate, tvs, snapshots, ledger,
         FakeLauncherPin(Samples.launcherArtifact()), themes, restorePoint, FakeRestoreNote(), sessionEnd, access, clock, KeyCopy,
         blobs = blobs, dock = dock, screenLock = { true }, diagnostics = diagnostics,
@@ -141,6 +142,7 @@ class Harness(val clock: FakeClock = FakeClock(Samples.NOW_MS), val facts: tv.cl
         connectDetail = connectDetail,
         documents = documents,
         wrongFocus = wrongFocus,
+        homeHelper = homeHelper,
     )
 
     fun setup(scope: CoroutineScope, start: SetupStart = SetupStart.Fresh, store: StoreRules = StoreRules.FULL) = SetupMachine(setupDeps(store = store), scope, start)
@@ -163,7 +165,7 @@ class Harness(val clock: FakeClock = FakeClock(Samples.NOW_MS), val facts: tv.cl
                    launcherPin: tv.cleanyour.core.trust.LauncherPin = FakeLauncherPin(Samples.launcherArtifact()),
                    themes: tv.cleanyour.core.spec.ThemeSource = this.themes, store: StoreRules = StoreRules.FULL,
                    updates: UpdateChecker = UpdateChecker { "0.2.0" }, profiles: tv.cleanyour.core.spec.ProfileSource = this.profiles,
-                   about: AppAbout = AppAbout("0.2.0", "full", "", "")) = ManageDeps(
+                   about: AppAbout = AppAbout("0.2.0", "full", "", ""), homeHelper: Boolean = false) = ManageDeps(
         tvs = tvs, sessions = sessions, discovery = discovery, access = access, gate = gate, runner = runner, engine = engine,
         ledger = ledger, prober = prober, profiles = profiles, facts = facts, snapshots = snapshots, documents = documents,
         blobs = blobs, themes = themes, launcherPin = launcherPin, configTransport = configTransport,
@@ -171,6 +173,8 @@ class Harness(val clock: FakeClock = FakeClock(Samples.NOW_MS), val facts: tv.cl
         cardDetector = CardAnswerDetector { _, _ -> cardAnswer }, sessionEnd = sessionEnd, homePrefs = HomePrefs(documents),
         appPrefs = AppPrefs(documents), keyInfo = keyInfo, updates = updates, diagnostics = diagnostics,
         clock = clock, copy = KeyCopy, encoder = encoder, store = store, appVersion = about.version, about = about,
+        log = FlowLog { logLines += it },
+        homeHelper = homeHelper,
     )
 
     // A TV this phone already set up, connected, with a stored snapshot.
@@ -197,6 +201,7 @@ class Harness(val clock: FakeClock = FakeClock(Samples.NOW_MS), val facts: tv.cl
         is tv.cleanyour.core.planner.PlanRequest.WriteRestorePoint -> PlanKind.WRITE_RESTORE_POINT
         tv.cleanyour.core.planner.PlanRequest.Reboot -> PlanKind.REBOOT
         is tv.cleanyour.core.planner.PlanRequest.UpdateLauncher -> PlanKind.UPDATE_LAUNCHER
+        tv.cleanyour.core.planner.PlanRequest.HomeHelperOff -> PlanKind.HOME_HELPER_OFF
     }
 }
 

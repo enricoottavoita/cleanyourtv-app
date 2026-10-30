@@ -5,6 +5,7 @@ import tv.cleanyour.core.model.Component
 import tv.cleanyour.core.model.CurtainGroup
 import tv.cleanyour.core.model.CurtainStage
 import tv.cleanyour.core.model.EnabledState
+import tv.cleanyour.core.model.FileRoute
 import tv.cleanyour.core.model.InstallFlag
 import tv.cleanyour.core.model.Op
 import tv.cleanyour.core.model.PackageName
@@ -108,7 +109,28 @@ object GoldenCases {
         GoldenCase("57-cue-install", "Curtain cue: the new home screen is being installed", cue(CurtainStage.INSTALL), null),
         GoldenCase("58-cue-installed", "Curtain cue: the new home screen is installed", cue(CurtainStage.INSTALLED), null),
         GoldenCase("59-cue-finale", "Curtain cue: the finale, before Home switches over", cue(CurtainStage.FINALE), null),
+        // RFC-THEME-1: the look through the launcher's ThemeProvider.
+        GoldenCase("60-push-asset-provider", "config.json staged in tmp, written by the launcher's provider (copy as the fallback), checked as the launcher reads it",
+            Op.PushAsset(configBlob, configPath, cfgSha, FileRoute.THEME_PROVIDER), Prior(present = false)),
+        GoldenCase("61-push-asset-provider-wallpaper", "wallpaper.jpg the same way",
+            Op.PushAsset(configBlob, wallpaperPath, cfgSha, FileRoute.THEME_PROVIDER), Prior(present = true)),
+        GoldenCase("62-remove-file-provider", "The launcher's provider deletes its own file", Op.RemoveFile(wallpaperPath, FileRoute.THEME_PROVIDER), null),
+        GoldenCase("63-read-launcher-file-sha256", "A file of the launcher's folder hashed as the launcher reads it",
+            Op.Read(ProbeKind.LAUNCHER_FILE_SHA256, ReadArg.Path(configPath)), null),
+        // RFC-HELPER-1 (test build): the Home button helper.
+        GoldenCase("64-helper-add-unset", "Home button helper: added to an unset list", Op.AccessibilityAdd(null, HelperLines.SERVICE), Prior()),
+        GoldenCase("65-helper-add-after-reader", "Home button helper: appended after a screen reader, compare-and-set",
+            Op.AccessibilityAdd(READER, HelperLines.SERVICE), Prior(settingValue = READER)),
+        GoldenCase("66-helper-remove", "Home button helper: taken out, the reader kept, compare-and-set",
+            Op.AccessibilityRemove("$READER:${HelperLines.SERVICE.flat}", HelperLines.SERVICE), Prior(settingValue = "$READER:${HelperLines.SERVICE.flat}")),
+        GoldenCase("67-helper-remove-last", "Home button helper: taken out as the last entry, the list deleted",
+            Op.AccessibilityRemove(HelperLines.SERVICE.flat, HelperLines.SERVICE), Prior(settingValue = HelperLines.SERVICE.flat)),
+        GoldenCase("68-helper-remove-on-tv", "Home button helper: taken out of the list the TV has now, accessibility off when it was the last",
+            Op.AccessibilityRemove(null, HelperLines.SERVICE, offIfEmpty = true), null),
+        GoldenCase("69-helper-timer", "Home button helper: the safety timer of its check",
+            Op.ArmHelperWatchdog(HelperLines.SERVICE, 150, token, offIfEmpty = true), null),
     )
+    const val READER = "com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService"
 }
 
 // The readable form of an op and of a rendering, shared by the golden files and the test messages.
@@ -128,8 +150,8 @@ object GoldenText {
         is Op.KillWatchdog -> "KillWatchdog token=${op.token.value}"
         Op.PressHome -> "PressHome"
         is Op.Mkdir -> "Mkdir dir=${op.dir.name}"
-        is Op.PushAsset -> "PushAsset src=${blob(op.src)} dest=${op.dest.absolute} sha256=${op.sha256.hex}"
-        is Op.RemoveFile -> "RemoveFile path=${op.path.absolute}"
+        is Op.PushAsset -> "PushAsset src=${blob(op.src)} dest=${op.dest.absolute} sha256=${op.sha256.hex}" + (if (op.route != FileRoute.SYNC) " route=${op.route.name}" else "")
+        is Op.RemoveFile -> "RemoveFile path=${op.path.absolute}" + (if (op.route != FileRoute.SYNC) " route=${op.route.name}" else "")
         is Op.RestartHome -> "RestartHome component=${op.component.flat}"
         is Op.StartActivity -> "StartActivity component=${op.component.flat} wait=${op.wait}"
         is Op.Read -> "Read kind=${op.kind.name}" + when (val a = op.arg) {
@@ -143,6 +165,9 @@ object GoldenText {
         Op.Reboot -> "Reboot"
         Op.DebugOff -> "DebugOff"
         is Op.CurtainCue -> "CurtainCue receiver=${op.receiver.flat} token=${op.token.value} stage=${op.stage.name} count=${op.count} total=${op.total} group=${op.group.name} groupCount=${op.groupCount} groupTotal=${op.groupTotal}"
+        is Op.AccessibilityAdd -> "AccessibilityAdd expected=${op.expected ?: "null"} component=${op.component.flat}"
+        is Op.AccessibilityRemove -> "AccessibilityRemove expected=${op.expected ?: "null"} component=${op.component.flat} offIfEmpty=${op.offIfEmpty}"
+        is Op.ArmHelperWatchdog -> "ArmHelperWatchdog component=${op.component.flat} seconds=${op.seconds} token=${op.token.value} offIfEmpty=${op.offIfEmpty}"
     }
 
     fun blob(b: BlobRef) = "${b.sha256.hex}:${b.size}:${b.path}"

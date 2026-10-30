@@ -193,14 +193,14 @@ class ModulesMachine(
                 snap == null || snap.hdmi.isNotEmpty() || liveTv?.let { it in packages } == true)
             val drafts = LookDrafts(d.themes, d.pictures, d.encoder, d.clock)
             val (doc, wallpaper) = drafts.docOf(choice, choice.dock, cards = true, OwnPicture.ref(d, tvId), lookTv)
-            return Look.encode(d.encoder, d.blobs, doc, wallpaper) to choice.copy(dock = DockLayers.keep(choice.dock), cards = true)
+            return Look.encode(d.encoder, d.blobs, LookCarry.of(d, tvId)(doc), wallpaper) to choice.copy(dock = DockLayers.keep(choice.dock), cards = true)
         }
         // 0.4.0: once a dated look has ended, the look before it (HomeChoice.lookOn).
         val theme = choice?.lookOn(d.clock.today())?.let { id -> d.themes.bundled().firstOrNull { it.id == id } }
         // 0.4.0: with the person's apps in a row, and the whole saved order kept (DockLayers.keep),
         // not only the part the TV shows.
         val look = Look.encode(d.encoder, d.blobs, theme, choice?.dock.orEmpty(), cards = true, OwnPicture.lookPicture(d, tvId, choice?.picture, choice?.dim),
-            choice?.columns)
+            choice?.columns, LookCarry.of(d, tvId), fillDock = choice?.dockChosen != true)
         return look to (choice ?: HomeChoice(emptyList(), null)).withTheme(theme?.id, DockLayers.keep(choice?.dock.orEmpty()), cards = true)
     }
 

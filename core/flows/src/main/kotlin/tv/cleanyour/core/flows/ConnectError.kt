@@ -24,6 +24,10 @@ object ConnectErrorSummary {
         .replace(IPV4, "[address]")
         .replace(IPV6, "[address]")
 
+    // The same, with the running app's `version` kept on the App line and the log's first line
+    // (OwnVersion.keep): a four-part version such as 0.4.6.1 looks like an address.
+    fun redact(line: String, version: String?): String = OwnVersion.keep(line, version) { redact(it) }
+
     fun build(about: AppAbout?, kind: String, detail: String?, log: String): String {
         val lines = log.lines().filter { it.isNotBlank() }.filterNot { it.startsWith(HEADER) }.takeLast(LOG_LINES)
         return buildList {
@@ -35,6 +39,6 @@ object ConnectErrorSummary {
                 add("Last log lines:")
                 addAll(lines)
             }
-        }.joinToString("\n") { redact(it) }
+        }.joinToString("\n") { redact(it, about?.version) }
     }
 }

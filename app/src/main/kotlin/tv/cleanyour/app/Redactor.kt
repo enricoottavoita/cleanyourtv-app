@@ -5,6 +5,7 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import tv.cleanyour.core.flows.Diagnostics
+import tv.cleanyour.core.flows.OwnVersion
 
 // SECURITY 4.6 and F13: everything the app logs goes through this redactor, and so does the
 // "Share diagnostics" text. Replaced: base64 or hex blobs of 40 characters or more (AUTH tokens,
@@ -77,7 +78,10 @@ object CytLog {
     fun clear() { synchronized(this) { ring.clear(); dir?.listFiles()?.forEach { it.delete() } } }
 }
 
-class LogDiagnostics(private val header: () -> String) : Diagnostics {
-    override suspend fun redactedText(): String = Redactor.redact(header()) + "\n" + CytLog.snapshot()
+// The header is the app's own line, "Clean Your TV <version>, Android <sdk>"; `version` is kept
+// whole there (OwnVersion.keep), since the address rule masked a four-part hotfix version such as
+// 0.4.6.1 to "x.x.x.1". The log lines after it are redacted as they always were.
+class LogDiagnostics(private val version: String? = null, private val header: () -> String) : Diagnostics {
+    override suspend fun redactedText(): String = OwnVersion.keep(header(), version, Redactor::redact) + "\n" + CytLog.snapshot()
     override suspend fun clear() = withContext(Dispatchers.IO) { CytLog.clear() }
 }

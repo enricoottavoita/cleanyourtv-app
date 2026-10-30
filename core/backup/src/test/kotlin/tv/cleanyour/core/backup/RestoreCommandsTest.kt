@@ -53,7 +53,9 @@ class RestoreCommandsTest {
         // package states first (the stock launcher, switched off last, comes first), our files last;
         // reads, the watchdog, restarts, mkdir, settle, debugging off and the restore point files leave no step
         assertEquals(Op.Enable(Scenario.stock.pkg), ops.first())
-        assertEquals(UndoOrder.Phase.entries, steps.map(::phase).distinct())
+        // The Home button helper's phase (RFC-HELPER-1, test build) has records of its own, in
+        // RestoreSafetyTest.theLaptopRestoreTakesOutOnlyTheHelper.
+        assertEquals(UndoOrder.Phase.entries - UndoOrder.Phase.HELPER, steps.map(::phase).distinct())
         assertEquals(steps.map(::phase).sorted(), steps.map(::phase))
         assertTrue(steps.none { it.change.op is Op.Read || it.change.op is Op.Mkdir || it.change.op is Op.KillWatchdog || it.change.op is Op.DebugOff })
         assertTrue(steps.none { RestoreCommands.isRestorePointFile(it.change.op) })

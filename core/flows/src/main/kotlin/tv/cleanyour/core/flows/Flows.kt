@@ -69,6 +69,10 @@ sealed interface SetupIntent { data object Start : SetupIntent; data class PickT
     data object Restart : SetupIntent; data object SaveRestoreNote : SetupIntent; data object AddCard : SetupIntent; data object Finish : SetupIntent
     data class StopAction(val action: tv.cleanyour.core.flows.StopAction) : SetupIntent; data object RejectIdentity : SetupIntent   // RFC-W8-1 (accepted)
     data class ShowOnTv(val on: Boolean) : SetupIntent   // RFC-CURTAIN-1: the Customise switch "Show the progress on the TV"
+    data class HomeHelper(val on: Boolean) : SetupIntent   // RFC-HELPER-1 (test build): the Customise switch "Home button helper", on only after its consent
+    // 0.4.8: Done after the restart check: "Tell us it worked" (the confirmation's preview), "Report a problem" after a
+    // restart that failed (`title`: the line as shown), and "Not right? Send it again" under the TV's screenshot.
+    data object TellUsItWorked : SetupIntent; data class ReportRestartFailed(val title: String) : SetupIntent; data object SendLookAgain : SetupIntent
     // RFC-LOOK-SETUP-1 (0.4.0): the look step has the Look sheet's choices. Apps in a row (4 to 8,
     // anything else is ignored), the picture (HomeChoice.picture, null for the look's own), and a
     // photo the phone just made (16:9, a JPEG of at most 280 KB) with its dim. They only change the
@@ -77,7 +81,10 @@ sealed interface SetupIntent { data object Start : SetupIntent; data class PickT
     class SetOwnPicture(val jpeg: ByteArray, val dim: Int) : SetupIntent
     // look2: every tap of the Look editor in the look step, the same edits as the Look sheet's
     // (HomeScreenIntent.Look). SetTheme, SelectColumns and SelectPicture stay until ui moves.
-    data class Look(val edit: LookEdit) : SetupIntent }
+    data class Look(val edit: LookEdit) : SetupIntent
+    // 0.4.7 (UX finding 5, PM 7): "Done" on What we found when there is nothing to switch off and the
+    // TV keeps its own home screen: Setup ends without a run.
+    data object LeaveAsIs : SetupIntent }
 // RFC-W8-1: a stop card button by position; the machine maps it per StopCase
 enum class StopAction { PRIMARY, SECONDARY, TERTIARY }
 sealed interface SetupEffect { data object HapticLight : SetupEffect; data object HapticDouble : SetupEffect; data object HapticFirm : SetupEffect

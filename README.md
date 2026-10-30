@@ -39,6 +39,21 @@ shows you how), and the whole clean-up about five minutes.
 Come back any time to put an app back, check for leftovers after a TV update, change the dock or
 the look, or undo everything.
 
+## What your TV gets
+
+Not every TV gets the new home screen yet. The app says which of these your TV gets before it
+changes anything, on the "What we found" screen, and why.
+
+| | Which TVs | What the app does |
+| :- | :- | :- |
+| **New home screen and clean-up** | TVs where testers confirmed the switch holds after a restart: most Xiaomi and Redmi sets on Android 9 to 11 and the Xiaomi MiTV-MZTU1 on Android 14; OnePlus on Android 11, Sony on Android 8, Hisense on Android 9, Homatics and MECOOL on Android 14 (with Google's Android TV home); and the TCL, Sony, Hisense, Philips and other models whose list says so | Switches off the clutter and puts the Clean Your TV home screen in charge, with a restore point first |
+| **Clean-up only, for now** | Most Google TV sets (their setup wizard holds the Wi-Fi, or the TV has no list yet), TVs the app has not met before, and Google's own Chromecast and TV Streamer (the switch would cost casting) | Switches off adverts, tracking and background apps. The TV keeps its own home screen, so it looks the same; the adverts drawn by that home screen stay with it |
+| **Not possible** | Fire TV, TCL's China builds, Android 7 and older | Clean-up only, and the app says so up front |
+
+The [TV list](https://udhaykumarbala.github.io/cleanyourtv-app/tvs/) says what each model gets today,
+which ones are in the test build, and which are coming soon. A TV with no list of its own moves up
+when its owners send its report from the app ("Help add this TV").
+
 ## Two ways to clean your TV
 
 [Clean Your TV](https://github.com/Gathin23/cleanyourtv) gives any Android TV a calm, ad-free home
@@ -88,7 +103,9 @@ based on its brand.
 - **Brand fallback:** for Amazon, Hisense, Panasonic, Philips, Sony, TCL, XGIMI and Xiaomi models
   without a profile, the app switches off only what every profile of that brand agrees on, and says
   it is being careful. More can be switched off by hand under Customise.
-- **Other Android TVs** get the home screen, and the app suggests only what it is sure about.
+- **Other Android TVs** get the clean-up the app is sure about, and keep their own home screen until
+  a list for them says the switch holds (see "What your TV gets" above and the
+  [TV list](https://udhaykumarbala.github.io/cleanyourtv-app/tvs/)).
 - **Clean-up only** (the TV keeps its own home screen, and the app says why): Fire TV, TCL's China
   builds, Android 7, vendor home screens the app does not know, Chromecast with Google TV and the
   Google TV Streamer (the switch would cost casting), the Kalley and PRISM+ sets whose setup wizard

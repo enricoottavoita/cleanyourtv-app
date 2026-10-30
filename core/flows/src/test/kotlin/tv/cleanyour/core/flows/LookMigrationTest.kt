@@ -15,6 +15,7 @@ import tv.cleanyour.core.spec.ButtonsChoice
 import tv.cleanyour.core.spec.DecodeResult
 import tv.cleanyour.core.spec.DockLayers
 import tv.cleanyour.core.spec.LauncherConfigCodec
+import tv.cleanyour.core.spec.LiveTvKeys
 import tv.cleanyour.core.spec.LookGates
 import tv.cleanyour.core.spec.Looks
 import tv.cleanyour.core.spec.Movement
@@ -40,6 +41,12 @@ class LookMigrationTest {
 
     private fun fixture(file: String): String =
         assertNotNull(javaClass.getResourceAsStream("/legacy-looks/$file"), "fixture $file").use { it.readBytes() }.decodeToString()
+
+    // 0.4.7: a Manage push also names the harness TV's Live TV app (Samples' com.android.tv), every
+    // other byte the frozen 0.4.0 path's (LookCarry, LiveTvKeys).
+    private fun live(json: String): String =
+        LauncherConfigCodec.encode(LiveTvKeys.apply(assertIs<DecodeResult.Ok>(LauncherConfigCodec.decode(json.encodeToByteArray())).doc,
+            PackageName("com.android.tv"))).decodeToString()
 
     // Every fixture, through the frozen path (LegacyLook) and through a saved legacy HomeChoice as
     // every push of it encodes it (LookDrafts.docOf): JSON text equal, so a diff names the key.
@@ -127,9 +134,9 @@ class LookMigrationTest {
             val (m, id) = home(h, HomeChoice(dock, "mist", cards = false, columns = columns))
             val file = "mist.cols-${columns ?: "own"}.pic-own.dock-4.json"
             m.dispatch(HomeScreenIntent.RestoreMine); settle()
-            assertEquals(fixture(file), h.lastPush(), "Restore mine: $file")
+            assertEquals(live(fixture(file)), h.lastPush(), "Restore mine: $file")
             m.dispatch(HomeScreenIntent.SetDock(dock)); settle()
-            assertEquals(fixture(file), h.lastPush(), "a dock change: $file")
+            assertEquals(live(fixture(file)), h.lastPush(), "a dock change: $file")
             assertNull(HomePrefs(h.documents).load(id)?.style, "still the legacy choice")
             assertEquals("mist", m.state.value.themeId)
             assertEquals(StyleId.CLASSIC to "mist", m.state.value.sentStyle to m.state.value.sentPicture)
@@ -139,7 +146,7 @@ class LookMigrationTest {
             m.dispatch(HomeScreenIntent.UseLook); settle()
             val text = assertNotNull(h.documents.read("tvs/${id.value}/home.txt") { it.decodeToString() })
             assertTrue("\nstyle=classic\n" in text && "\ncolumns=${columns ?: 5}\n" in text, text)
-            assertNotEquals(fixture(file), h.lastPush(), "the new form")
+            assertNotEquals(live(fixture(file)), h.lastPush(), "the new form")
             val back = assertIs<DecodeResult.Ok>(LauncherConfigCodec.decode(h.lastPush().encodeToByteArray()))
             assertEquals(emptyList(), back.warnings)
             // This 1 GB TV gets Quick with Lift and zoom off.
@@ -183,7 +190,7 @@ class LookMigrationTest {
         m.dispatch(HomeScreenIntent.OpenLook); settle()
         m.dispatch(HomeScreenIntent.UseLook); settle()
         val next = LookSamples.matrix.single { it.name == "next-mist" }
-        assertEquals(LookSamples.push(next, looks, looks).second.decodeToString(), h.lastPush())
+        assertEquals(live(LookSamples.push(next, looks, looks).second.decodeToString()), h.lastPush())
         assertEquals(next.choice.copy(dock = LookSamples.dock4), HomePrefs(h.documents).load(tv.id)?.copy(previousPicture = null))
     }
 

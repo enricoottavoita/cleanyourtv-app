@@ -77,7 +77,9 @@ class UrlConnectionFetcher(
             } catch (e: FetchException) {
                 conn.disconnect(); throw e
             } catch (e: SSLException) {
-                conn.disconnect(); throw FetchException(FetchFailure.HTTP_ERROR, null, "TLS failed: ${e.javaClass.simpleName}", e)
+                // 0.4.7 (issue #818): the TLS stack's own words too (a Certificate Transparency or trust anchor
+                // refusal reads differently), cut short and on one line, for the diagnostics log.
+                conn.disconnect(); throw FetchException(FetchFailure.HTTP_ERROR, null, "TLS failed: ${e.javaClass.simpleName}${tlsWords(e)}", e)
             } catch (e: UnknownHostException) {
                 conn.disconnect(); throw FetchException(FetchFailure.OFFLINE, null, "no DNS answer", e)
             } catch (e: ConnectException) {
@@ -107,6 +109,13 @@ class UrlConnectionFetcher(
     companion object {
         const val USER_AGENT = "Mozilla/5.0"
         private val REDIRECTS = setOf(301, 302, 303, 307, 308)
+        // The innermost cause's message, printable ASCII, at most 120 characters; empty when there is none.
+        internal fun tlsWords(e: Throwable): String {
+            var t: Throwable = e
+            while (t.cause != null && t.cause !== t) t = t.cause!!
+            val m = (t.message ?: e.message)?.map { if (it in ' '..'~') it else ' ' }?.joinToString("")?.trim()?.take(120)
+            return if (m.isNullOrEmpty()) "" else ": $m"
+        }
         private fun hostOf(url: String): String = try { URL(url).host } catch (e: Exception) { "?" }
     }
 }

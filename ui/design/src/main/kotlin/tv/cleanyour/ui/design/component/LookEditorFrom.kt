@@ -30,5 +30,5 @@ fun LookDraft.toEditor(
     names = names, movement = movement, movementPicked = movementPicked, lift = lift, details = details, rows = rows,
     changed = changed, newPhoto = newPhoto, wayBack = wayBack, note = note, ramMb = ramMb, keyNames = keyNames,
     settingsFile = settingsFile, fullFile = fullFile, tvChanged = tvChanged, reads30 = reads30, extras = extras,
-    actingExtras = actingExtras, offeredExtras = offeredExtras,
+    actingExtras = actingExtras, offeredExtras = offeredExtras, canSend = canSend,
 )

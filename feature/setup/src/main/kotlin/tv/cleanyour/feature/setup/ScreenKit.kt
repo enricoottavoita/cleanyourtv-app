@@ -45,19 +45,21 @@ fun ChipState.toTvStatus(): TvStatus = when (this) {
 // A stop card's primary drops touches through an overlay (SECURITY 4.3) when it acts: carries on,
 // tries again, retakes Home, reads the TV. Not when it is Back, a plain OK or a way to another
 // screen (R5-W8 O1).
+// 0.4.7 (UX finding 16): the wizard's Wi-Fi card keeps the TV's own home screen first; its second
+// button tries the switch again.
 fun StopCase.primaryActs(): Boolean = when (this) {
     StopCase.WRONG_NETWORK, StopCase.IDENTITY_CHANGED, StopCase.TV_NOT_SUPPORTED,
     StopCase.TV_REFUSES_HOME, StopCase.PAIRING_NEEDED, StopCase.HOME_TIMED_OUT,
-    StopCase.INSTALL_FAILED, StopCase.UNDONE,
+    StopCase.INSTALL_FAILED, StopCase.UNDONE, StopCase.HOME_SETUPWRAITH,
     -> false
     else -> true
 }
 
 // The same rule for the second and third buttons (R4-W8): "Undo what we did" rolls the run back,
-// "Stop here" puts the old home screen back when a home section is open, "Try again" retakes
+// "Stop here" puts the TV's own home screen back when a home section is open, "Try again" retakes
 // Home. "Leave it as is", "Keep {launcher}", "Show details", Back and OK do not write.
 fun StopCase.secondaryActs(): Boolean = when (this) {
-    StopCase.CONNECTION_LOST, StopCase.STEP_FAILED, StopCase.RESUME_AFTER_DEATH, StopCase.HOME_TIMED_OUT -> true
+    StopCase.CONNECTION_LOST, StopCase.STEP_FAILED, StopCase.RESUME_AFTER_DEATH, StopCase.HOME_TIMED_OUT, StopCase.HOME_SETUPWRAITH -> true
     else -> false
 }
 

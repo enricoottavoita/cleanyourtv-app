@@ -67,6 +67,48 @@ class FullStoreTest {
         assertEquals("https://github.com/udhaykumarbala/cleanyourtv-app/releases", Store.releasePage)
     }
 
+    // 0.4.7 (issue #818): the API's 60 requests an hour per address run out behind a shared address (CGNAT, a VPN),
+    // and it answers 403. The releases feed on github.com has no such limit; its newest tag without a hyphen is the
+    // latest release. When neither answers, the diagnostics log says why for each.
+    private class ByUrl(val answers: Map<String, Any>) : HttpFetcher {
+        val urls = mutableListOf<String>()
+        override suspend fun get(url: String, etag: String?, rangeFrom: Long?): HttpResponse {
+            urls += url
+            return when (val a = answers[url]) {
+                is Exception -> throw a
+                is Pair<*, *> -> (a.second as String).let { HttpResponse(a.first as Int, null, ByteArrayInputStream(it.encodeToByteArray()), it.length.toLong()) }
+                else -> HttpResponse(404, null, null, null)
+            }
+        }
+    }
+    private val feed = """<feed><entry><link rel="alternate" type="text/html" href="https://github.com/udhaykumarbala/cleanyourtv-app/releases/tag/v0.4.7-beta1"/></entry>
+        <entry><link rel="alternate" type="text/html" href="https://github.com/udhaykumarbala/cleanyourtv-app/releases/tag/v0.4.6"/></entry>
+        <entry><link rel="alternate" type="text/html" href="https://github.com/udhaykumarbala/cleanyourtv-app/releases/tag/v0.4.5"/></entry></feed>"""
+
+    @Test fun aRateLimitedApiFallsBackToTheReleasesFeed() = runBlocking {
+        val lines = mutableListOf<String>()
+        val http = ByUrl(mapOf(Store.RELEASES_URL to (403 to """{"message":"API rate limit exceeded"}"""), Store.FEED_URL to (200 to feed)))
+        assertEquals("0.4.6", Store.updateChecker(http) { lines += it }.latestNewerThan("0.4.5"))
+        assertEquals(listOf(Store.RELEASES_URL, Store.FEED_URL), http.urls)
+        assertEquals(listOf("settings: update check used the releases feed (api HTTP 403)"), lines)
+        assertEquals("", Store.updateChecker(http) {}.latestNewerThan("0.4.6"))
+        // A test build is offered its own release from the feed too, never the one before it.
+        assertEquals("0.4.6", Store.updateChecker(http) {}.latestNewerThan("0.4.6-beta3"))
+        assertEquals(null, Store.latestInFeed("<feed></feed>"))
+    }
+
+    @Test fun whenNeitherAnswersTheLogSaysWhy() = runBlocking {
+        val lines = mutableListOf<String>()
+        val tls = tv.cleanyour.core.registry.FetchException(tv.cleanyour.core.registry.FetchFailure.HTTP_ERROR, null, "TLS failed: SSLHandshakeException: chain refused")
+        val http = ByUrl(mapOf(Store.RELEASES_URL to tls, Store.FEED_URL to (429 to "")))
+        assertEquals(null, Store.updateChecker(http) { lines += it }.latestNewerThan("0.4.5"))
+        assertEquals(listOf("settings: update check failed: api http_error (TLS failed: SSLHandshakeException: chain refused), feed HTTP 429"), lines)
+        // The API's answer is used first when it has a tag: one request.
+        val ok = ByUrl(mapOf(Store.RELEASES_URL to (200 to """{"tag_name":"v0.4.6"}""")))
+        assertEquals("0.4.6", Store.updateChecker(ok) {}.latestNewerThan("0.4.5"))
+        assertEquals(listOf(Store.RELEASES_URL), ok.urls)
+    }
+
     // Test build: 0.3.5-test1 is offered 0.3.5 and later, never the 0.3.4 it installs over.
     @Test fun aTestBuildIsOfferedOnlyANewerRelease() = runBlocking {
         fun latest(tag: String, current: String) = runBlocking { Store.updateChecker(OneAnswer(200, "{\"tag_name\":\"v$tag\"}")).latestNewerThan(current) }

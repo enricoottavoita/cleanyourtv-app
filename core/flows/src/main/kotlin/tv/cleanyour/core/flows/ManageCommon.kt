@@ -118,12 +118,28 @@ class ManageDeps(
     // switch decision for each TV (SetupMachine keeps it).
     val about: AppAbout = AppAbout(appVersion, "full", "", ""),
     val homeDecisions: HomeDecisions = HomeDecisions(documents),
+    // 0.4.7: whether and when each TV's report was sent (SentReports).
+    val sentReports: SentReports = SentReports(documents),
     // 0.4.0: the pictures any look can show instead of its own (the app's ThemeSource is one).
     val pictures: PictureSource = themes as? PictureSource ?: PictureSource.NONE,
     // 0.4.6: the app's redactor, run over what a card puts into a problem report (ReportContext).
     val redact: (String) -> String = { it },
+    // 0.4.7: Manage's diagnostics lines (StockHomeBack); outcomes in fixed words.
+    val log: FlowLog = FlowLog { },
+    // 0.4.7: what each TV's last connect read (StockHomeBack), for Manage's card and the problem report.
+    val stockHomeBacks: StockHomeBack.Reads = StockHomeBack.Reads(),
+    // RFC-HELPER-1: whether this build shows the Home button helper (the test build's bundled switch).
+    val homeHelper: Boolean = tv.cleanyour.core.planner.HomeHelper.BUILD_ON,
+    // 0.4.8: the restarts this phone counted for each TV (Restarts); the app gives Setup the same one.
+    val restarts: Restarts = Restarts(documents),
+    // RFC-REACH-1: how the phone is connected, for "Copy connection details" (the app reads ConnectivityManager).
+    val phoneNetwork: PhoneNetwork = PhoneNetwork { PhoneNetworkFacts.UNKNOWN },
 ) {
     fun tv(id: TvId): Tv? = tvs.tvs.value.firstOrNull { it.id == id }
+
+    // RFC-REACH-1: the block "Copy connection details" copies or shares, made when asked for.
+    suspend fun connectionDetails(): String =
+        ConnectionDetails(about, tvs, sessions, discovery, access, phoneNetwork, diagnostics, clock, redact).build()
 
     // The TV's exact profile as Setup last stored it, unless it does not fit the Home of the TV's
     // latest snapshot (issue #114: a record kept from before the rule names an Android TV list for a
@@ -157,10 +173,17 @@ class ManageDeps(
 // `picture` is never null and `columns` is always written.
 // 0.4.5: `extras` (the "x." lines) are the home screen 3.0 switches, each line written only when it
 // is not the launcher's own, so a 0.4.0 file loads as DEFAULT and saves again byte for byte.
+// 0.4.7: `dockChosen` false ("dockchosen=false", the only form written) is a dock the app picked
+// (DockRanking) in a Setup from 0.4.7 on: its pushes write fill_dock true, the launcher's own
+// behaviour, so the TV fills a free dock space with the next apps (Look.docOf). True is a dock the
+// person saved in a Dock sheet (Setup's Customise or Manage), whose free spaces stay empty
+// (fill_dock false, as since 0.4.0). A file from before 0.4.7 has no line and loads as true: the
+// phone cannot tell who made that dock, so its bytes stay as they were until Setup runs again.
 data class HomeChoice(val dock: List<PackageName>, val themeId: String?, val cards: Boolean? = null, val previousThemeId: String? = null,
     val picture: String? = null, val dim: Int? = null, val columns: Int? = null,
     val style: String? = null, val movement: String? = null, val lift: Boolean? = null, val names: Boolean? = null,
-    val details: LookDetails = LookDetails(), val previousPicture: String? = null, val extras: LookExtras = LookExtras.DEFAULT) {
+    val details: LookDetails = LookDetails(), val previousPicture: String? = null, val extras: LookExtras = LookExtras.DEFAULT,
+    val dockChosen: Boolean = true) {
     // The look that is this TV's on `today`: the saved one, or once a dated look has ended, the one
     // before it (null, the Default look, when that one has ended too or there was none).
     fun lookOn(today: LocalDate): String? = when {
@@ -176,8 +199,9 @@ data class HomeChoice(val dock: List<PackageName>, val themeId: String?, val car
     // The choice after the person picks `next`: a dated look keeps the look before it, any other
     // look forgets it.
     fun withTheme(next: String?, dock: List<PackageName> = this.dock, cards: Boolean? = this.cards, picture: String? = this.picture,
-        dim: Int? = this.dim, columns: Int? = this.columns): HomeChoice =
-        HomeChoice(dock, next, cards, previousThemeId = previousFor(themeId, previousThemeId, next), picture = picture, dim = dim, columns = columns)
+        dim: Int? = this.dim, columns: Int? = this.columns, dockChosen: Boolean = this.dockChosen): HomeChoice =
+        HomeChoice(dock, next, cards, previousThemeId = previousFor(themeId, previousThemeId, next), picture = picture, dim = dim, columns = columns,
+            dockChosen = dockChosen)
 
     // look2: the choice is in the new form (a style), not a saved 0.4.0 look.
     val isNew: Boolean get() = style != null
@@ -198,7 +222,7 @@ fun Clock.today(): LocalDate = Instant.ofEpochMilli(nowMs()).atZone(ZoneId.syste
 // tvs/<id>/home.txt, one "key=value" line each. Every line is optional, and a value that does not
 // read loads as null, so a file of any version loads: 0.3.x (dock, theme, cards, previous), 0.4.0
 // (picture, dim, columns), look2 (style, movement, lift, names, prevpic and the "d." details) and
-// 0.4.5 (the "x." extras, only those not at the launcher's own).
+// 0.4.5 (the "x." extras, only those not at the launcher's own) and 0.4.7 (dockchosen, only when false).
 class HomePrefs(private val store: DocumentStore) {
     private fun path(id: TvId) = "tvs/${id.value}/home.txt"
 
@@ -222,7 +246,7 @@ class HomePrefs(private val store: DocumentStore) {
                 "d.bigname" to d.bigName, "d.glow" to d.glow?.id, "d.spotcolour" to d.spotColour, "d.ring" to d.ring,
                 "d.band" to d.band?.id, "d.see" to d.seeThrough, "d.buttons" to d.buttons?.id, "d.wifi" to d.greenWifi,
                 "d.dim" to d.dim, "d.sky" to d.sky, "d.skystr" to d.skyStrength,
-            ) + extrasLines(choice.extras)
+            ) + extrasLines(choice.extras) + listOf("dockchosen" to "false".takeIf { !choice.dockChosen })
             return lines.filter { (k, v) -> v != null || k == "dock" || k == "theme" }.joinToString("") { (k, v) -> "$k=$v\n" }
         }
 
@@ -257,6 +281,7 @@ class HomePrefs(private val store: DocumentStore) {
                     tiles = TilesChoice.entries.firstOrNull { it.id == map["x.tiles"] } ?: TilesChoice.ART,
                     highlight = HighlightChoice.entries.firstOrNull { it.id == map["x.highlight"] } ?: HighlightChoice.GLASS,
                 ),
+                dockChosen = map["dockchosen"] != "false",
             )
         }
     }

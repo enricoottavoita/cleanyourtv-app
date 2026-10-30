@@ -20,6 +20,7 @@ import tv.cleanyour.core.model.Component
 import tv.cleanyour.core.model.CurtainGroup
 import tv.cleanyour.core.model.CurtainStage
 import tv.cleanyour.core.model.EnabledState
+import tv.cleanyour.core.model.FileRoute
 import tv.cleanyour.core.model.InstallFlag
 import tv.cleanyour.core.model.Op
 import tv.cleanyour.core.model.PackageName
@@ -99,8 +100,9 @@ object ChangeJson {
             is Op.KillWatchdog -> put("token", op.token.value)
             Op.PressHome -> {}
             is Op.Mkdir -> put("dir", op.dir.name)
-            is Op.PushAsset -> { put("src", blob(op.src)); put("dest", path(op.dest)); put("sha256", op.sha256.hex) }
-            is Op.RemoveFile -> put("path", path(op.path))
+            // RFC-THEME-1: the route only when it is not the sync one, so earlier files read and write the same.
+            is Op.PushAsset -> { put("src", blob(op.src)); put("dest", path(op.dest)); put("sha256", op.sha256.hex); if (op.route != FileRoute.SYNC) put("route", op.route.name) }
+            is Op.RemoveFile -> { put("path", path(op.path)); if (op.route != FileRoute.SYNC) put("route", op.route.name) }
             is Op.RestartHome -> put("component", op.component.flat)
             is Op.StartActivity -> { put("component", op.component.flat); put("wait", op.wait) }
             is Op.Read -> { put("kind", op.kind.name); put("arg", op.arg?.let(::readArg) ?: JsonNull) }
@@ -111,6 +113,10 @@ object ChangeJson {
                 put("receiver", op.receiver.flat); put("token", op.token.value); put("stage", op.stage.name)
                 put("count", op.count); put("total", op.total); put("group", op.group.name); put("groupCount", op.groupCount); put("groupTotal", op.groupTotal)
             }
+            // RFC-HELPER-1
+            is Op.AccessibilityAdd -> { put("expected", op.expected); put("component", op.component.flat) }
+            is Op.AccessibilityRemove -> { put("expected", op.expected); put("component", op.component.flat); put("offIfEmpty", op.offIfEmpty) }
+            is Op.ArmHelperWatchdog -> { put("component", op.component.flat); put("seconds", op.seconds); put("token", op.token.value); put("offIfEmpty", op.offIfEmpty) }
         }
     }
 
@@ -132,8 +138,8 @@ object ChangeJson {
         "kill_watchdog" -> Op.KillWatchdog(RunToken(o.str("token")))
         "press_home" -> Op.PressHome
         "mkdir" -> Op.Mkdir(RemoteDir.valueOf(o.str("dir")))
-        "push_asset" -> Op.PushAsset(decodeBlob(o.obj("src")), decodePath(o.obj("dest")), o.sha("sha256"))
-        "remove_file" -> Op.RemoveFile(decodePath(o.obj("path")))
+        "push_asset" -> Op.PushAsset(decodeBlob(o.obj("src")), decodePath(o.obj("dest")), o.sha("sha256"), route(o))
+        "remove_file" -> Op.RemoveFile(decodePath(o.obj("path")), route(o))
         "restart_home" -> Op.RestartHome(component(o.str("component")))
         "start_activity" -> Op.StartActivity(component(o.str("component")), o.bool("wait"))
         "read" -> Op.Read(ProbeKind.valueOf(o.str("kind")), o.field("arg").let { if (it is JsonNull) null else decodeReadArg(it.jsonObject) })
@@ -142,8 +148,13 @@ object ChangeJson {
         "debug_off" -> Op.DebugOff
         "curtain_cue" -> Op.CurtainCue(component(o.str("receiver")), RunToken(o.str("token")), CurtainStage.valueOf(o.str("stage")),
             o.int("count"), o.int("total"), CurtainGroup.valueOf(o.str("group")), o.int("groupCount"), o.int("groupTotal"))
+        "accessibility_add" -> Op.AccessibilityAdd(o.strOrNull("expected"), component(o.str("component")))
+        "accessibility_remove" -> Op.AccessibilityRemove(o.strOrNull("expected"), component(o.str("component")), o.bool("offIfEmpty"))
+        "arm_helper_watchdog" -> Op.ArmHelperWatchdog(component(o.str("component")), o.int("seconds"), RunToken(o.str("token")), o.bool("offIfEmpty"))
         else -> throw IllegalArgumentException("unknown op type $type")
     }
+
+    private fun route(o: JsonObject): FileRoute = if ("route" in o) o.strOrNull("route")?.let { FileRoute.valueOf(it) } ?: FileRoute.SYNC else FileRoute.SYNC
 
     fun typeOf(op: Op): String = when (op) {
         is Op.Disable -> "disable"
@@ -169,6 +180,9 @@ object ChangeJson {
         Op.Reboot -> "reboot"
         Op.DebugOff -> "debug_off"
         is Op.CurtainCue -> "curtain_cue"
+        is Op.AccessibilityAdd -> "accessibility_add"
+        is Op.AccessibilityRemove -> "accessibility_remove"
+        is Op.ArmHelperWatchdog -> "arm_helper_watchdog"
     }
 
     fun prior(p: Prior): JsonObject = buildJsonObject {

@@ -28,18 +28,24 @@ import tv.cleanyour.core.store.BlobStore
 // 0.4.0 `columns`: the person's apps in a row (HomeChoice.columns), null for the look's own. It goes
 // into the look's doc before the dock is cut (DockLayers.applyTo), so rows_below_dock and dock_title
 // follow it. A dated look takes it too: apps in a row is not the picture.
-// 0.4.0 fill_dock is false in every push: a dock space the person left free stays empty on the TV
+// 0.4.0 fill_dock was false in every push: a dock space the person left free stays empty on the TV
 // instead of taking the first app of the grid (launcher DockSlots.empty), so the dock holds only the
 // apps they picked, and the Look sheet's preview draws the space as empty band.
+// 0.4.7 `fillDock`: true for a dock the app picked in a Setup (HomeChoice.dockChosen false). Such a
+// dock (DockRanking) often holds fewer apps than a row, and an app the TV skips
+// (not installed, switched off) leaves a space too: there the launcher's own behaviour comes back,
+// and the next apps fill the spaces instead of leaving the dock one app long (#1166). The default
+// false keeps the frozen bytes for the tests outside the flows (LookDocs, the goldens).
 // look2: a choice in the new form (HomeChoice.style) is built from scratch by LookKeys.build from
 // its resolved LookSpec and PictureKeys (LookRules), spec 7.1; a legacy choice (style null) keeps
 // the frozen 0.4.0 path (LegacyLook) byte for byte until the next send.
 internal class Look(val doc: LauncherConfigDoc, val digest: Sha256, val config: BlobRef, val wallpaper: BlobRef?) {
     companion object {
+        // RFC-HELPER-1: `carry` adds what this TV needs (LookCarry: the helper's keys, the Live TV keys).
         suspend fun encode(encoder: ConfigEncoder, blobs: BlobStore, theme: Theme?, dock: List<PackageName>, cards: Boolean, picture: LookPicture? = null,
-            columns: Int? = null): Look {
-            val (doc, wallpaper) = docOf(theme, dock, cards, picture, columns)
-            return encode(encoder, blobs, doc, wallpaper)
+            columns: Int? = null, carry: (LauncherConfigDoc) -> LauncherConfigDoc = { it }, fillDock: Boolean = false): Look {
+            val (doc, wallpaper) = docOf(theme, dock, cards, picture, columns, fillDock)
+            return encode(encoder, blobs, carry(doc), wallpaper)
         }
 
         // A doc and its wallpaper as the push sends them, encoded and stored.
@@ -49,17 +55,20 @@ internal class Look(val doc: LauncherConfigDoc, val digest: Sha256, val config: 
         }
 
         // The doc and the wallpaper a 0.4.0 choice pushes, without storing anything (LegacyLook).
-        fun docOf(theme: Theme?, dock: List<PackageName>, cards: Boolean, picture: LookPicture?, columns: Int? = null): Pair<LauncherConfigDoc, BlobRef?> =
-            LegacyLook.docOf(theme, dock, cards, picture, columns)
+        fun docOf(theme: Theme?, dock: List<PackageName>, cards: Boolean, picture: LookPicture?, columns: Int? = null,
+            fillDock: Boolean = false): Pair<LauncherConfigDoc, BlobRef?> =
+            LegacyLook.docOf(theme, dock, cards, picture, columns, fillDock)
 
         // look2: the doc and the wallpaper of a choice in the new form: its rows resolved on this TV,
         // then LookKeys.build (style keys, details, picture, movement, columns, fill_dock false, the
-        // dock and its rows, module_cards, and the 3.0 switches that act here, LookRules.extras).
-        fun docOf(parts: LookParts, picture: LookPictureInfo, dock: List<PackageName>, cards: Boolean, tv: LookTv): Pair<LauncherConfigDoc, BlobRef?> {
+        // dock and its rows, module_cards, and the 3.0 switches that act here, LookRules.extras), with
+        // fill_dock true for a dock the app picked (`fillDock`, 0.4.7).
+        fun docOf(parts: LookParts, picture: LookPictureInfo, dock: List<PackageName>, cards: Boolean, tv: LookTv,
+            fillDock: Boolean = false): Pair<LauncherConfigDoc, BlobRef?> {
             val rows = LookRules.rows(parts, picture, DockLayers.trim(dock, parts.columns).size, tv)
             val doc = LookKeys.build(LookRules.spec(parts, rows), LookRules.pictureKeys(picture, rows), parts.columns, dock, cards,
                 LookRules.extras(parts, rows, tv))
-            return doc to picture.wallpaper
+            return (if (fillDock) doc.copy(fillDock = true) else doc) to picture.wallpaper
         }
     }
 }
@@ -68,8 +77,9 @@ internal class Look(val doc: LauncherConfigDoc, val digest: Sha256, val config: 
 // new look (spec 8.2, C16), so neither the TV nor the drift check sees a change nobody made. The
 // legacy-looks fixtures (LookMigrationTest) hold it to the bytes 0.4.0 sent.
 internal object LegacyLook {
-    fun docOf(theme: Theme?, dock: List<PackageName>, cards: Boolean, picture: LookPicture?, columns: Int? = null): Pair<LauncherConfigDoc, BlobRef?> {
-        val base = DockLayers.applyTo(theme?.doc ?: LauncherConfigDoc(), dock, columns).copy(moduleCards = cards, fillDock = false)
+    fun docOf(theme: Theme?, dock: List<PackageName>, cards: Boolean, picture: LookPicture?, columns: Int? = null,
+        fillDock: Boolean = false): Pair<LauncherConfigDoc, BlobRef?> {
+        val base = DockLayers.applyTo(theme?.doc ?: LauncherConfigDoc(), dock, columns).copy(moduleCards = cards, fillDock = fillDock)
         return when (val p = picture.takeUnless { Looks.dated(theme?.id) }) {
             null -> base to theme?.wallpaper
             LookPicture.None -> base.copy(wallpaper = false, wallpaperRotationMinutes = 0) to null

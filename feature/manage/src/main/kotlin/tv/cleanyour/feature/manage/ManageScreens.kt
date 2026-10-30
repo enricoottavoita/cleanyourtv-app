@@ -132,12 +132,22 @@ fun ManageScreen(state: ManageState, onIntent: (ManageIntent) -> Unit, modifier:
                 onClick = { onIntent(ManageIntent.RefreshThumbnail) },
             )
             // Navigation into the wizard, whose own "Make it clean" is the guarded action (R5-W8 O1).
-            if (!tv.clean) PrimaryButton(stringResource(R.string.manage_clean_again), { onIntent(ManageIntent.CleanAgain) }, Modifier.padding(top = 16.dp), guardObscured = false)
+            // 0.4.7 (PM 11): "Run Setup again" stays visible for every TV, the one name for the way back in.
+            // 0.4.7 (StockHomeBack): the TV turned its own home screen back on, so Run Setup again is the way back.
+            if (!tv.clean || tv.stockHomeBack) PrimaryButton(stringResource(R.string.manage_clean_again), { onIntent(ManageIntent.CleanAgain) }, Modifier.padding(top = 16.dp), guardObscured = false)
+            else SecondaryButton(stringResource(R.string.manage_clean_again), { onIntent(ManageIntent.CleanAgain) }, Modifier.padding(top = 16.dp))
             // 0.3.2 B1: an unlisted TV (no exact profile) invites the person to help add it.
+            // 0.4.7 (must 4): once its report was sent, the banner says when and that the issue is
+            // where news comes; sending again stays one tap away.
             if (tv.helpAddTv) {
-                Banner(stringResource(R.string.manage_help_add_tv_banner), BannerTone.INFO, Modifier.padding(top = 16.dp),
-                    actionLabel = stringResource(R.string.manage_help_add_tv), onAction = { onIntent(ManageIntent.HelpAddTv) })
+                val sent = tv.reportSentAtMs
+                Banner(if (sent != null) msg(R.string.manage_report_sent_banner, "date" to shortDate(sent, locale)) else stringResource(R.string.manage_help_add_tv_banner),
+                    BannerTone.INFO, Modifier.padding(top = 16.dp),
+                    actionLabel = stringResource(if (sent != null) R.string.manage_send_again else R.string.manage_help_add_tv), onAction = { onIntent(ManageIntent.HelpAddTv) })
             }
+            // 0.4.8 (Restarts): what the app counted across this TV's restarts. A restart that failed comes first,
+            // with Report a problem; else, once one held, "Tell us it worked" opens the confirmation's preview.
+            tv.restarts?.let { r -> RestartsBanner(r, onIntent) }
             // 0.4.6: on this connect a setup wizard claims Home while the TV's own home screen is off
             // (WizardHome). The way back sits above the rows, like the drift banner's "Restore mine";
             // its button writes to the TV, so it is guarded.
@@ -154,13 +164,23 @@ fun ManageScreen(state: ManageState, onIntent: (ManageIntent) -> Unit, modifier:
             }
             ListGroup(Modifier.padding(top = 16.dp)) {
                 // 0.3.3 D2: without the new home screen there is no dock to name; the row opens the reason.
+                // 0.4.7 (UX finding 8): installed but not in use says the TV's own is in use; and when the
+                // TV turned its own back on behind this app (StockHomeBack), the row says that.
                 ListRow(stringResource(R.string.manage_row_home),
-                    subtitle = if (tv.ownHome) stringResource(R.string.manage_row_home_own) else tv.dockNames.joinToString(", ").ifEmpty { null },
+                    subtitle = when {
+                        tv.stockHomeBack -> stringResource(R.string.manage_row_home_stock_back)
+                        tv.homeHelperOn -> stringResource(R.string.manage_row_home_helper)   // RFC-HELPER-1 (test build)
+                        tv.ownHome -> stringResource(R.string.manage_row_home_own)
+                        tv.homeInstalledNotInUse -> stringResource(R.string.manage_row_home_not_in_use)
+                        else -> tv.dockNames.joinToString(", ").ifEmpty { null }
+                    },
                     onClick = { onIntent(ManageIntent.Open(ManageSection.HOME_SCREEN)) })
                 ListDivider()
                 // STORES-PLAN 1: the Play build has no add-ons, so no row that leads to them.
+                // UX finding 9: without the new home screen a card shows as an app, and the row says so.
                 if (state.addOns) {
-                    ListRow(stringResource(R.string.manage_row_cards), onClick = { onIntent(ManageIntent.Open(ManageSection.MODULES)) })
+                    ListRow(stringResource(R.string.manage_row_cards), subtitle = if ((tv.ownHome || tv.homeInstalledNotInUse) && !tv.homeHelperOn) stringResource(R.string.manage_row_cards_own_home) else null,
+                        onClick = { onIntent(ManageIntent.Open(ManageSection.MODULES)) })
                     ListDivider()
                 }
                 // WP4 (C6): what the list for this TV now keeps on, as one line into Switched off.
@@ -191,27 +211,35 @@ fun ManageScreen(state: ManageState, onIntent: (ManageIntent) -> Unit, modifier:
     }
 }
 
-// M1a: the debugging step for a returning write; it advances on its own when the port opens
-// (UX 4.3). The app lays it over whatever screen asked (TvAccess.reach).
+// 0.4.8: the restart count's banner on Manage. Neither action writes to the TV: one opens the preview, the other the
+// prefilled problem form.
 @Composable
-fun DebugStepSheet(reach: Reach, onCancel: () -> Unit) {
-    val name = when (reach) {
-        is Reach.NeedsDebugging -> reach.tvName
-        is Reach.Connecting -> reach.tvName
-        is Reach.AwaitingAllow -> reach.tvName
-        is Reach.WrongNetwork -> reach.tvName
-        Reach.Idle -> return
+private fun RestartsBanner(r: tv.cleanyour.core.flows.RestartTally, onIntent: (ManageIntent) -> Unit) {
+    val locale = LocalConfiguration.current.locales[0]
+    when {
+        r.lastFailed && r.failed > 0 -> {
+            val title = stringResource(R.string.manage_restart_failed)
+            Banner(
+                buildAnnotatedString { withStyle(SpanStyle(fontWeight = FontWeight.Medium)) { append(title) }; append("\n"); append(stringResource(R.string.manage_restart_failed_body)) },
+                BannerTone.WARNING, Modifier.padding(top = 16.dp),
+                actionLabel = stringResource(R.string.manage_restart_report), onAction = { onIntent(ManageIntent.ReportRestartFailed(title)) },
+            )
+        }
+        r.held > 0 -> {
+            val told = r.toldAtMs
+            val body = if (told != null) msg(R.string.manage_restarts_told, "date" to shortDate(told, locale)) else stringResource(R.string.manage_restarts_ask)
+            val action = when {
+                told == null -> stringResource(R.string.manage_restarts_tell)
+                r.held > r.toldHeld -> stringResource(R.string.manage_restarts_tell_again)
+                else -> null
+            }
+            Banner(
+                buildAnnotatedString { withStyle(SpanStyle(fontWeight = FontWeight.Medium)) { append(msg(R.string.manage_restarts_held, "count" to r.held)) }; append("\n"); append(body) },
+                BannerTone.SUCCESS, Modifier.padding(top = 16.dp),
+                actionLabel = action, onAction = { onIntent(ManageIntent.TellUsItWorked) },
+            )
+        }
     }
-    CytBottomSheet(onCancel) { DebugStepContent(name, connecting = reach is Reach.Connecting, onCancel) }
-}
-
-@Composable
-internal fun ColumnScope.DebugStepContent(tvName: String, connecting: Boolean, onCancel: () -> Unit) {
-    Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) { TvStatusChip(tvName, TvStatus.WAITING) }
-    StepCard(stringResource(R.string.debugstep_title), stringResource(R.string.debugstep_body), Modifier.padding(top = 16.dp))
-    Body(stringResource(R.string.debugstep_note), Modifier.padding(top = 12.dp, start = 4.dp, end = 4.dp))
-    LiveLine(stringResource(if (connecting) R.string.debugstep_connecting else R.string.debugstep_waiting))
-    TertiaryButton(stringResource(R.string.action_cancel), onCancel, Modifier.align(Alignment.CenterHorizontally).padding(top = 12.dp), quiet = true)
 }
 
 // A Manage write that paused left its run open (R5-W8 O2): every later write on that TV would be
@@ -244,8 +272,27 @@ internal fun ColumnScope.OpenWriteContent(
         else -> stringResource(R.string.openwrite_body)
     }
     val title = msg(if (stale) R.string.openwrite_title_stale else R.string.openwrite_title, "tv" to open.tvName)
+    // 0.4.7 (UX finding 19): a look that did not reach the TV (an ApplyTheme run paused, not STALE)
+    // says so by name, with "Send it again" and "Undo".
+    val look = !setup && !stale && open.kind == PlanKind.THEME && open.tookHome == null
     Gap(8.dp)
-    if (setup) {
+    if (look) {
+        var asking by rememberSaveable(open.planId.value) { mutableStateOf(initiallyAsking) }
+        val pending = asking
+        val question = pending?.let { Confirmations.forOpenWrite(it) }
+        if (pending != null && question != null && !open.busy) {
+            ConfirmQuestionFor(question, onConfirm = { asking = null; onAction(pending) }, onCancel = { asking = null })
+            return
+        }
+        fun act(a: OpenWriteAction) { if (Confirmations.forOpenWrite(a) != null) asking = a else onAction(a) }
+        val lookTitle = msg(R.string.openwrite_title_look, "tv" to open.tvName)
+        StopCard(lookTitle, if (open.notTaken) stringResource(R.string.openwrite_not_taken) else stringResource(R.string.openwrite_body_look),
+            primaryLabel = if (open.busy) null else stringResource(R.string.openwrite_send_again), onPrimary = { act(OpenWriteAction.CARRY_ON) },
+            secondaryLabel = if (open.busy) null else stringResource(R.string.action_undo), onSecondary = { act(OpenWriteAction.UNDO) },
+            tertiaryLabel = if (open.busy) null else stringResource(R.string.openwrite_stop), onTertiary = { act(OpenWriteAction.STOP_HERE) },
+            detailsLabel = if (open.busy) null else stringResource(R.string.openwrite_report), onDetails = { onReport(lookTitle) },
+            busyText = if (open.busy) stringResource(R.string.openwrite_busy) else null)
+    } else if (setup) {
         StopCard(title, body,
             primaryLabel = stringResource(R.string.openwrite_open_setup), onPrimary = onOpenSetup,
             tertiaryLabel = stringResource(R.string.openwrite_later), onTertiary = onDismiss,
@@ -427,8 +474,11 @@ internal fun ColumnScope.ForgetContent(tvName: String, onIntent: (TvSettingsInte
 
 // M8 App settings (D12, F2, F13). The Reset my key confirmation is FLAG_SECURE (D35, set by the app).
 @Composable
-fun AppSettingsScreen(state: AppSettingsState, onIntent: (AppSettingsIntent) -> Unit, onBack: () -> Unit, onOpenRelease: () -> Unit, modifier: Modifier = Modifier) {
+// RFC-REACH-1: `details` and `onDetails` drive "Connection details" (the app collects and copies or shares the block).
+fun AppSettingsScreen(state: AppSettingsState, onIntent: (AppSettingsIntent) -> Unit, onBack: () -> Unit, onOpenRelease: () -> Unit, modifier: Modifier = Modifier,
+    details: DetailsUi = DetailsUi(), onDetails: (share: Boolean) -> Unit = {}) {
     var licences by rememberSaveable { mutableStateOf(false) }
+    var connection by rememberSaveable { mutableStateOf(false) }
     var privacy by rememberSaveable { mutableStateOf(false) }
     ScreenScaffold(Glow.Tv, modifier, topBar = { CytTopBar(onBack = onBack) }) {
         ScreenTitle(stringResource(R.string.appsettings_title), titleTop)
@@ -476,6 +526,9 @@ fun AppSettingsScreen(state: AppSettingsState, onIntent: (AppSettingsIntent) -> 
             ListDivider()
             ListRow(stringResource(R.string.appsettings_report), subtitle = stringResource(R.string.appsettings_report_note),
                 onClick = { onIntent(AppSettingsIntent.ReportProblem) })
+            ListDivider()
+            ListRow(stringResource(R.string.appsettings_details), subtitle = stringResource(R.string.appsettings_details_note),
+                onClick = { connection = true })
         }
         ListGroup(Modifier.padding(top = 12.dp, bottom = 24.dp)) {
             ListRow(stringResource(R.string.appsettings_reset_key), subtitle = stringResource(R.string.appsettings_reset_key_note),
@@ -487,6 +540,7 @@ fun AppSettingsScreen(state: AppSettingsState, onIntent: (AppSettingsIntent) -> 
     }
     if (licences) CytBottomSheet({ licences = false }) { LicencesContent() }
     if (privacy) CytBottomSheet({ privacy = false }) { PrivacyContent(online = state.updateCheck || state.addOns) }
+    if (connection) CytBottomSheet({ connection = false }) { DetailsContent(details, onDetails) }
     state.confirm?.let { what ->
         CytBottomSheet({ onIntent(AppSettingsIntent.CancelConfirm) }) { ConfirmContent(what, state.working, onIntent) }
     }

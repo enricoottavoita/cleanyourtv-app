@@ -64,4 +64,34 @@ class RestoreSafetyTest {
         val offBefore = listOf(rec(0, Op.SettingsPut(SettingKey.ACCESSIBILITY_ENABLED, "1"), Prior(settingValue = "0")))
         assertEquals(listOf(RestoreStepKind.PUT_BACK), RestoreCommands(ShellRenderer()).steps(offBefore).map { it.kind })
     }
+
+    // RFC-HELPER-1 (test build), PLAN 4.4: the laptop scripts cannot read the list first, so the
+    // helper's add goes back as the TV-side removal of that one entry, which keeps every other entry;
+    // accessibility goes back off only inside that line, when nothing else is left. The separate
+    // accessibility_enabled line, which would switch off another service, is left out. A removal of
+    // ours is never undone, and no line switches accessibility on.
+    @Test fun theLaptopRestoreTakesOutOnlyTheHelper() {
+        val service = tv.cleanyour.core.ops.HelperLines.SERVICE
+        val reader = "com.example.reader/.Reader"
+        val on = listOf(
+            rec(0, Op.ArmHelperWatchdog(service, 150, RunToken("00000000000000ab"), true), null),
+            rec(1, Op.AccessibilityAdd(null, service), Prior(settingValue = null)),
+            rec(2, Op.SettingsPut(SettingKey.ACCESSIBILITY_ENABLED, "1"), Prior(settingValue = "0")),
+            rec(3, Op.ConfirmHome(RunToken("00000000000000ab")), null),
+        )
+        val steps = RestoreCommands(ShellRenderer()).steps(on)
+        val helper = steps.single()
+        assertEquals(RestoreStepKind.PUT_BACK, helper.kind)
+        assertEquals(Op.AccessibilityRemove(null, service, offIfEmpty = true), helper.inverse)
+        assertEquals(listOf(tv.cleanyour.core.ops.HelperLines.tvRemove(service, offIfEmpty = true)), helper.lines)
+        assertTrue(helper.lines.none { "accessibility_enabled 1" in it || "accessibility_enabled' '1'" in it })
+        // Accessibility was on before: the removal only, never accessibility off.
+        val wasOn = RestoreCommands(ShellRenderer()).steps(listOf(rec(1, Op.AccessibilityAdd(reader, service), Prior(settingValue = reader)))).single()
+        assertEquals(Op.AccessibilityRemove(null, service, offIfEmpty = false), wasOn.inverse)
+        // Switched off since through Manage: nothing to put back from the helper.
+        val off = on + rec(9, Op.AccessibilityRemove(service.flat, service), Prior(settingValue = service.flat))
+        assertEquals(listOf(Op.AccessibilityRemove(null, service, offIfEmpty = true)), RestoreCommands(ShellRenderer()).steps(off).map { it.inverse })
+        val onlyRemoved = listOf(rec(0, Op.AccessibilityRemove("$reader:${service.flat}", service), Prior(settingValue = "$reader:${service.flat}")))
+        assertTrue(RestoreCommands(ShellRenderer()).steps(onlyRemoved).isEmpty(), "a removal is never undone")
+    }
 }

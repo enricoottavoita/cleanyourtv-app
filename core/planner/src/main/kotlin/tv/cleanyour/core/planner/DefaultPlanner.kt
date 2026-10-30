@@ -6,6 +6,7 @@ import tv.cleanyour.core.model.Component
 import tv.cleanyour.core.model.CurtainGroup
 import tv.cleanyour.core.model.CurtainStage
 import tv.cleanyour.core.model.EnabledState
+import tv.cleanyour.core.model.FileRoute
 import tv.cleanyour.core.model.GroupDefault
 import tv.cleanyour.core.model.InstallFlag
 import tv.cleanyour.core.model.LauncherArtifact
@@ -26,10 +27,12 @@ import kotlinx.coroutines.runBlocking
 import tv.cleanyour.core.ops.ConfigTransport
 import tv.cleanyour.core.ops.Denylist
 import tv.cleanyour.core.ops.FailurePolicy
+import tv.cleanyour.core.ops.HelperLines
 import tv.cleanyour.core.ops.HomePlaceholder
 import tv.cleanyour.core.ops.OpRenderer
 import tv.cleanyour.core.ops.RenderRefused
 import tv.cleanyour.core.ops.Rendered
+import tv.cleanyour.core.ops.ThemeProviderLines
 import tv.cleanyour.core.ops.UndoOrder
 import tv.cleanyour.core.ops.Watchdog
 import tv.cleanyour.core.spec.AppNames
@@ -67,6 +70,9 @@ import tv.cleanyour.core.store.IdGen
 // its name (ProfileCategory.isUpdater, D22) or by the profile's "updates" group. Setup shows it as
 // protected ("We keep these", with REASON_UPDATES), SwitchOff refuses it, and Setup and Leftovers
 // skip one an earlier full build had switched off. Off (the default), updates stay a choice (D22).
+//
+// `homeHelper` (RFC-HELPER-1): whether this build plans the Home button helper at all; the test
+// build's bundled switch (HomeHelper.BUILD_ON, -Pcyt.homeHelper=true) by default, false in a release.
 class DefaultPlanner(
     private val clock: Clock,
     private val idGen: IdGen,
@@ -82,6 +88,7 @@ class DefaultPlanner(
     private val curtainReceiver: Component = Component(PackageName(CURTAIN_PACKAGE), ".CueReceiver"),
     private val curtainSigner: Sha256? = null,
     private val keepUpdatesOn: Boolean = false,
+    private val homeHelper: Boolean = HomeHelper.BUILD_ON,
 ) : Planner {
 
     override fun plan(request: PlanRequest, snapshot: Snapshot, facts: FactsTable, journals: List<ChangeRecord>): PlanResult {
@@ -102,6 +109,7 @@ class DefaultPlanner(
             is PlanRequest.WriteRestorePoint -> { d.writeRestorePoint(request.restorePointJson, request.restoreTxt); PlanKind.WRITE_RESTORE_POINT }
             PlanRequest.Reboot -> { d.reboot(); PlanKind.REBOOT }
             is PlanRequest.UpdateLauncher -> { d.updateLauncher(request.launcher); PlanKind.UPDATE_LAUNCHER }
+            PlanRequest.HomeHelperOff -> { d.helperOff(); PlanKind.HOME_HELPER_OFF }
         }
         if (d.reasons.isNotEmpty()) return PlanResult.Refused(d.reasons.toList())
         val steps = d.steps.toList()
@@ -124,6 +132,12 @@ class DefaultPlanner(
         var replacesLauncher = false
 
         fun summary() = PlanSummary(groups.toList(), keepNames, dockNames, homeScreenPossible, replacesLauncher)
+
+        // The accessibility settings as this plan leaves them so far (RFC-HELPER-1): the snapshot's,
+        // until a step of the plan takes the helper out. restoreAccessibility puts back these, so a
+        // restart after the helper went never brings it back.
+        var accList: String? = snapshot.settings[SettingKey.ENABLED_ACCESSIBILITY]
+        var accOn: String? = snapshot.settings[SettingKey.ACCESSIBILITY_ENABLED]
 
         // This TV's resolution for the Manage requests (R1 R-3), with the snapshot's Home (issue #114).
         // The bundled source answers without suspending, so the blocking call returns at once; the
@@ -320,11 +334,16 @@ class DefaultPlanner(
             // pushes CONTINUE on failure: a STOP here would pause the setup with an offer to undo the
             // whole run for a cosmetic step that Manage can send again at any time.
             val config = req.config
-            if (choices.takeover && config != null && (launcherSteps || installed(launcher.pkg))) {
+            // RFC-HELPER-1: the helper and the switch are two answers to one question, never both.
+            if (choices.homeHelper && choices.takeover) { refuse(REASON_HELPER_AND_SWITCH); return }
+            if ((choices.takeover || choices.homeHelper) && config != null && (launcherSteps || installed(launcher.pkg))) {
                 val overlayGone = !installed(launcher.pkg) || replacesLauncher   // a fresh install, or the uninstall took its files
-                look(config, req.wallpaper, overlayGone, FailurePolicy.CONTINUE)
+                // RFC-THEME-1: the launcher the look reaches is the one this plan installs, else the one on the TV.
+                val version = if (launcherSteps) req.launcher.versionCode else state(launcher.pkg)?.versionCode
+                look(config, req.wallpaper, overlayGone, FailurePolicy.CONTINUE, themeRoute(version))
             }
             if (choices.takeover) takeover(req.launcher, profile, stockLaunchers, launcherSteps, choices.wizardWifi)
+            if (choices.homeHelper) helper(req.launcher, profile, stockLaunchers, launcherSteps, config)
             homeSwitchRows()
             val curtain = req.curtain
             // RF-PROFILES-63 P1: the curtain is an app like the launcher (minSdk TV_MIN_SDK); below it there is none.
@@ -449,6 +468,7 @@ class DefaultPlanner(
             val rows = switched.map { s ->
                 val pkg = (s.op as Op.Disable).pkg
                 if (s.narration == NARRATION_WIZARD) RowSummary(pkg, NARRATION_WIZARD, DESCRIPTION_WIZARD, off = true, protected = true, whyProtected = REASON_SWITCH_PART)
+                else if (pkg in HomePlaceholder.FACTORY_HOMES_OFF) RowSummary(pkg, name(pkg), DESCRIPTION_FACTORY_HOME, off = true, protected = true, whyProtected = REASON_SWITCH_PART)
                 else RowSummary(pkg, name(pkg), DESCRIPTION_OLD_HOME, off = true, protected = true, whyProtected = REASON_SWITCH_PART)
             }
             val i = groups.indexOfFirst { it.id == GROUP_HOME }
@@ -524,6 +544,8 @@ class DefaultPlanner(
             val claimants = snapshot.home.claimants.map { it.component }
             val stock = StockHome.of(snapshot, stockLaunchers)
             if (stock == null) { refuse("the TV's home screen is not one of the known ones for this model (issue #85)"); return }
+            // Issue #2028: Home answers to a home screen we do not know that Android ranks above ours.
+            if (StockHome.unknownAboveOurs(snapshot, stockLaunchers)) { refuse(REASON_UNKNOWN_HOME_ABOVE); return }
             // Never a section around a Fire OS home: its switch-off and its step R Enable are both refused.
             if (FireOs.isHome(stock.pkg)) { refuse(REASON_TV_REFUSES_HOME); return }
             // What the engine allows inside the open switch (SwitchOffRule), for the same facts.
@@ -537,6 +559,14 @@ class DefaultPlanner(
             // D25: the stock launcher is disabled unless the profile keeps it enabled (quirk or
             // never_disable) or the rule keeps it on for this TV's facts (persistent, an input).
             val keepStockEnabled = (profile != null && Quirk.STOCK_LAUNCHER_KEEP_ENABLED in profile.quirks) || !mayGoOff(stock.pkg)
+            // Issue #1944: a factory test app that answers Home and that a tested list switches off
+            // (HomePlaceholder.FACTORY_HOMES_OFF) goes off before the TV's own home screen, as the
+            // MOOQ0 list's header says, unless the clean-up above already does it. At priority 0 it
+            // ties with the new home screen, and with the TV's own home screen off it is what Home
+            // lands on once the new one is gone. Step R switches it back on after the TV's own.
+            val factoryHomes = claimants.map { it.pkg }.distinct().filter {
+                it in HomePlaceholder.FACTORY_HOMES_OFF && it != stock.pkg && !isOff(it) && !planned(Op.Disable(it)) && mayGoOff(it)
+            }
             val token = idGen.runToken()
 
             // Launcher v2.4.0's precondition: the TV's own home screen is left alone unless the new one
@@ -546,6 +576,7 @@ class DefaultPlanner(
             step(Op.StartActivity(launcher, wait = true), null, GROUP_HOME, "Starting the new home screen", FailurePolicy.CONTINUE)
             step(Op.Mkdir(RemoteDir.TMP), null, GROUP_HOME, "Preparing the safety timer", FailurePolicy.CONTINUE)
             val from = step(Op.ArmHomeWatchdog(stock, watchdogSeconds, token), null, GROUP_HOME, "Arming the safety timer", FailurePolicy.STOP_AND_ROLLBACK)
+            for (pkg in factoryHomes) disable(pkg, GROUP_HOME, FailurePolicy.STOP_AND_ROLLBACK, "Switching off ${name(pkg)}, which also answers the Home button")
             if (!keepStockEnabled) disable(stock.pkg, GROUP_HOME, FailurePolicy.STOP_AND_ROLLBACK, "Switching off the TV's own home screen")
             if (wizard != null) disable(wizard, GROUP_HOME, FailurePolicy.STOP_AND_ROLLBACK, NARRATION_WIZARD)
             // WP4 (B5): the prior is the home screen the TV goes back to; never the chooser or a placeholder.
@@ -559,8 +590,7 @@ class DefaultPlanner(
             val rollback: List<Op> = listOfNotNull(
                 Op.ConfirmHome(token), Op.KillWatchdog(token),
                 if (keepStockEnabled) null else Op.Enable(stock.pkg), wizard?.let { Op.Enable(it) },
-                Op.SetHome(stock), Op.VerifyHome(stock), Op.PressHome,
-            )
+            ) + factoryHomes.map { Op.Enable(it) } + listOf(Op.SetHome(stock), Op.VerifyHome(stock), Op.PressHome)
             // Focus on any of these after the HOME key means the takeover did not hold: the TV's
             // own home screens, the setup wizard, the resolver (package android, admitted by
             // PackageName since RFC-W1-2, R1 R-8) and FallbackHome.
@@ -572,6 +602,77 @@ class DefaultPlanner(
                 ).toSet()
             sections += GuardedSection(SECTION_HOME, from, to, token, confirmWindowMs, launcher, rollbackIfFocus, rollback)
             homeScreenPossible = true
+        }
+
+        // The Home button helper (RFC-HELPER-1, test build).
+
+        // PLAN 4.3: after the look (which carries stock_home_redirect and key_filter false, and whose
+        // own restart put the TV's list back first, 4.5), one guarded section: the new home screen
+        // must start, the safety timer is armed, our HomeKeyService is appended to the list by
+        // compare-and-set, accessibility goes on only when nothing else is listed (S3), Home is
+        // pressed and the check screen asks the person while the engine watches what is in front.
+        // Step R takes our entry out again (and accessibility back off when it went on here). No
+        // SetHome and no switch-off: HOME stays the TV's own, so no HOME watchdog is needed.
+        fun helper(artifact: LauncherArtifact, profile: Profile?, stockLaunchers: List<Component>, launcherInstalledByPlan: Boolean, config: BlobRef?) {
+            HomeHelper.refusal(snapshot, stockLaunchers, refusesOtherHomes(profile), homeHelper)?.let { refuse(it.reason); return }
+            val current = state(launcher.pkg)
+            if (!launcherInstalledByPlan && !(current != null && current.signer == artifact.signer)) { refuse("the new home screen is not installed and the plan does not install it"); return }
+            if (config == null) { refuse(REASON_HELPER_LOOK); return }
+            val stock = HomeHelper.stock(snapshot, stockLaunchers) ?: run { refuse(HomeHelper.Refusal.NOT_PROFILE_HOME.reason); return }
+            val list = HomeHelper.list(snapshot)
+            val listed = HelperLines.listed(list)
+            val needsOn = HomeHelper.needsOn(snapshot)
+            homeScreenPossible = true
+            if (listed && !needsOn) return   // already on: the look above carried its keys again
+            val token = idGen.runToken()
+            val service = HomeHelper.SERVICE
+            step(Op.StartActivity(launcher, wait = true), null, GROUP_HELPER, "Starting the new home screen", FailurePolicy.CONTINUE)
+            step(Op.Mkdir(RemoteDir.TMP), null, GROUP_HELPER, "Preparing the safety timer", FailurePolicy.CONTINUE)
+            val from = step(Op.ArmHelperWatchdog(service, watchdogSeconds, token, offIfEmpty = needsOn), null, GROUP_HELPER, "Arming the safety timer", FailurePolicy.STOP_AND_ROLLBACK)
+            val after = if (listed) list!! else HelperLines.appended(list, service)
+            if (!listed) step(Op.AccessibilityAdd(list, service), Prior(settingValue = list), GROUP_HELPER,
+                if (HelperLines.others(list).isEmpty()) NARRATION_HELPER_ON else NARRATION_HELPER_ON_WITH_OTHERS, FailurePolicy.STOP_AND_ROLLBACK)
+            if (needsOn) step(Op.SettingsPut(SettingKey.ACCESSIBILITY_ENABLED, "1"), Prior(settingValue = snapshot.settings[SettingKey.ACCESSIBILITY_ENABLED]),
+                GROUP_HELPER, "Switching on accessibility for the helper", FailurePolicy.STOP_AND_ROLLBACK)
+            step(Op.Settle(HELPER_BIND_SECONDS), null, GROUP_HELPER, "Letting the helper start", FailurePolicy.CONTINUE)
+            step(Op.PressHome, null, GROUP_HELPER, "Pressing Home", FailurePolicy.CONTINUE)
+            val to = step(Op.Settle(HELPER_CHECK_SECONDS), null, GROUP_HELPER, "Checking the home screen", FailurePolicy.CONTINUE)
+            step(Op.ConfirmHome(token), null, GROUP_HELPER, "Confirming the new home screen", FailurePolicy.CONTINUE)
+            step(Op.KillWatchdog(token), null, GROUP_HELPER, "Disarming the safety timer", FailurePolicy.CONTINUE)
+            if (from < 0 || to < 0) return
+            accList = after; if (needsOn) accOn = "1"
+            val rollback: List<Op> = listOfNotNull(
+                // Only an entry this plan added goes; one the TV listed already stays (its timer would
+                // still take it out, the safe side of a helper that did not work).
+                if (!listed) Op.AccessibilityRemove(after, service) else null,
+                if (needsOn) Op.SettingsPut(SettingKey.ACCESSIBILITY_ENABLED, "0") else null,
+                Op.ConfirmHome(token), Op.KillWatchdog(token), Op.PressHome,
+            )
+            // The TV's own home screen in front after Home (and still there a second later, the
+            // engine's second look) means the helper did not send it on: roll back (S6, S7).
+            val ownHomes = (stockLaunchers.map { it.pkg } + stock.pkg + snapshot.home.claimants.map { it.component.pkg }.filter { it != launcher.pkg }).toSet()
+            sections += GuardedSection(SECTION_HELPER, from, to, token, confirmWindowMs, launcher, ownHomes, rollback)
+        }
+
+        // Manage's "Switch off": our HomeKeyService out of the list by compare-and-set, every other
+        // entry as it was (PLAN 4.4), and accessibility back off only when this app switched it on and
+        // the list is now empty. The look keeps stock_home_redirect until the next look is sent
+        // (HomeHelperKeys.carry drops it then); without the helper nothing reads it, so no restart.
+        fun helperOff() {
+            val list = HomeHelper.list(snapshot)
+            if (!HelperLines.listed(list)) return   // already off
+            if (list != null && !SettingKey.ENABLED_ACCESSIBILITY.valueShape.matches(list)) { refuse(HomeHelper.Refusal.LIST_UNREADABLE.reason); return }
+            helperOut(list!!, GROUP_HELPER, FailurePolicy.STOP_AND_ROLLBACK, journals)
+        }
+
+        // The removal and, when allowed, accessibility back off; shared by helperOff and Undo.
+        fun helperOut(list: String, group: String, policy: FailurePolicy, records: List<ChangeRecord>) {
+            step(Op.AccessibilityRemove(list, HomeHelper.SERVICE), Prior(settingValue = list), group, NARRATION_HELPER_OFF, policy)
+            accList = HelperLines.without(list)
+            if (accList == null && accOn == "1" && HomeHelper.switchedOnByUs(records)) {
+                step(Op.SettingsPut(SettingKey.ACCESSIBILITY_ENABLED, "0"), Prior(settingValue = "1"), group, "Switching accessibility back off", policy)
+                accOn = "0"
+            }
         }
 
         // ---- Manage ------------------------------------------------------------------------------
@@ -618,10 +719,11 @@ class DefaultPlanner(
         // 0.4.6: a package that may answer Home once it is on again (a switched off package is no
         // claimant, so the snapshot cannot say): Google's and Amazon's TV home screens, the stock
         // launchers of this TV's resolution, the TV's own home the switch armed its watchdog with, a
-        // vendor home, or a claimant the TV still lists.
+        // vendor home, or a claimant the TV still lists. Issue #1944: or a factory test app that
+        // answers Home (HomePlaceholder.isFactoryHome), which ties with the new home screen.
         fun mayClaimHome(pkg: PackageName): Boolean =
             pkg in KnownLaunchers.byPackage || managedStockLaunchers.any { it.pkg == pkg } || HomePlaceholder.stockFromRecords(journals)?.pkg == pkg ||
-                pkg.value in Denylist.vendorHomes || snapshot.home.claimants.any { it.component.pkg == pkg }
+                pkg.value in Denylist.vendorHomes || snapshot.home.claimants.any { it.component.pkg == pkg } || HomePlaceholder.isFactoryHome(pkg)
 
         fun switchOff(pkgs: Set<PackageName>) {
             val rows = mutableListOf<RowSummary>()
@@ -656,8 +758,16 @@ class DefaultPlanner(
 
         fun applyTheme(config: BlobRef, wallpaper: BlobRef?) {
             if (!installed(launcher.pkg)) { refuse("the new home screen is not installed"); return }
-            look(config, wallpaper, overlayGone = false, pushPolicy = FailurePolicy.STOP_AND_ROLLBACK)
+            look(config, wallpaper, overlayGone = false, pushPolicy = FailurePolicy.STOP_AND_ROLLBACK, route = themeRoute(state(launcher.pkg)?.versionCode))
         }
+
+        // RFC-THEME-1 (issues #1279, #1649, #1094, #1290): the look goes through the launcher's ThemeProvider where
+        // the TV has `content write` (Android 10 and later) and the launcher has the provider (2.5, versionCode 6,
+        // and later); a versionCode not read (0 or none) is the launcher this app bundles, the LookGates rule. Else
+        // the sync push as before: Android 8 and 9, where it works (the Mi TVs of the maintainer), and an older launcher.
+        fun themeRoute(launcherVersion: Long?): FileRoute =
+            if (snapshot.facts.sdk >= ThemeProviderLines.MIN_SDK && (launcherVersion == null || launcherVersion <= 0L || launcherVersion >= ThemeProviderLines.FIRST_VERSION_CODE))
+                FileRoute.THEME_PROVIDER else FileRoute.SYNC
 
         // The transport's config.json steps (D15) with their priors and narration, shared by ApplyTheme
         // and Setup (RFC-DOCK-1). `overlayGone`: the launcher's folder holds nothing of ours before this
@@ -665,9 +775,9 @@ class DefaultPlanner(
         // both pushes record that the files were absent and Undo everything removes them again.
         // Otherwise the config prior is the overlay the probe read and the wallpaper's is unknown.
         // `pushPolicy` is the pushes' failure policy; the other steps always CONTINUE.
-        fun look(config: BlobRef, wallpaper: BlobRef?, overlayGone: Boolean, pushPolicy: FailurePolicy) {
+        fun look(config: BlobRef, wallpaper: BlobRef?, overlayGone: Boolean, pushPolicy: FailurePolicy, route: FileRoute = FileRoute.SYNC) {
             val ops = try {
-                configTransport.writePlanSteps(config, wallpaper)
+                configTransport.writePlanSteps(config, wallpaper, route)
             } catch (e: IllegalArgumentException) {
                 refuse("the look cannot be sent to the TV: ${e.message}"); return
             }
@@ -699,8 +809,8 @@ class DefaultPlanner(
         // service in the list, someone else's too, and an accessibility service reads the screen, so
         // the app never switches one on; it only puts back exactly what the TV had.
         fun restoreAccessibility(group: String) {
-            if (snapshot.settings[SettingKey.ACCESSIBILITY_ENABLED] != "1") return
-            val list = snapshot.settings[SettingKey.ENABLED_ACCESSIBILITY] ?: return
+            if (accOn != "1") return
+            val list = accList ?: return
             if (list.split(':').none { it.startsWith(launcher.pkg.value + "/") }) return
             if (!SettingKey.ENABLED_ACCESSIBILITY.valueShape.matches(list)) return   // a list the renderer would refuse is left as the TV has it
             val narration = "Switching the home screen's remote buttons back on"
@@ -730,7 +840,8 @@ class DefaultPlanner(
             // the TV; the same steps, priors and failure policy as ApplyTheme. Without the new home
             // screen on the TV there is nothing to read it, so the add goes without it.
             val config = req.config
-            if (config != null && installed(launcher.pkg)) look(config, req.wallpaper, overlayGone = false, pushPolicy = FailurePolicy.STOP_AND_ROLLBACK)
+            if (config != null && installed(launcher.pkg)) look(config, req.wallpaper, overlayGone = false, pushPolicy = FailurePolicy.STOP_AND_ROLLBACK,
+                route = themeRoute(state(launcher.pkg)?.versionCode))
             step(Op.PressHome, null, GROUP_MODULE, "Showing the home screen", FailurePolicy.CONTINUE)
         }
 
@@ -780,6 +891,14 @@ class DefaultPlanner(
             var clearedLook = false
             for (c in order) {
                 when (val t = UndoOrder.target(c.op)) {
+                    // RFC-HELPER-1: first among the settings, our HomeKeyService leaves the list when an
+                    // add of ours is the earliest record of it. Undo never adds one (a removal is never undone).
+                    is UndoOrder.Target.Helper -> {
+                        val list = accList
+                        if (c.op !is Op.AccessibilityAdd || !HelperLines.listed(list) || list == null) continue
+                        if (!SettingKey.ENABLED_ACCESSIBILITY.valueShape.matches(list)) continue
+                        helperOut(list, GROUP_UNDO, FailurePolicy.CONTINUE, changes + journals)
+                    }
                     is UndoOrder.Target.PackageEnabled -> {
                         val current = state(t.pkg) ?: continue
                         val prior = c.prior ?: continue
@@ -800,6 +919,9 @@ class DefaultPlanner(
                         // write is null, "0" or what the TV has right now (AccessibilityPutBackPropertyTest).
                         if (t.key == SettingKey.ACCESSIBILITY_ENABLED && original == "1") continue
                         if (t.key == SettingKey.ENABLED_ACCESSIBILITY && !original.isNullOrEmpty()) continue
+                        // RFC-HELPER-1 (S3): accessibility switched on for the helper goes back off only
+                        // with nothing else left in the list (helperOut already did it then).
+                        if (t.key == SettingKey.ACCESSIBILITY_ENABLED && (HelperLines.entries(accList).isNotEmpty() || accOn == "0")) continue
                         step(Op.SettingsPut(t.key, original), Prior(settingValue = current), GROUP_UNDO, "Putting back the TV's ${t.key.key.replace('_', ' ')} setting", FailurePolicy.CONTINUE)
                     }
                     UndoOrder.Target.Home -> if (originalHome != null && originalHome != launcher) useStockHome(originalHome, null, changes)
@@ -822,8 +944,9 @@ class DefaultPlanner(
                         val launcherStays = installed(launcher.pkg) && !(removeLauncher && launcher.pkg in ourApps)
                         if (!launcherStays || t.path.dir != RemoteDir.OVERLAY || c.prior?.present != false) continue
                         val last = changes.filter { UndoOrder.target(it.op) == t }.maxWithOrNull(UndoOrder.CHRONOLOGICAL)
-                        if (last?.op !is Op.PushAsset) continue
-                        step(Op.RemoveFile(t.path), null, GROUP_UNDO, "Clearing the look", FailurePolicy.CONTINUE)
+                        val pushed = last?.op as? Op.PushAsset ?: continue
+                        // RFC-THEME-1: a file the provider wrote is the launcher's, so the provider removes it too.
+                        step(Op.RemoveFile(t.path, pushed.route), null, GROUP_UNDO, "Clearing the look", FailurePolicy.CONTINUE)
                         clearedLook = true
                     }
                     null -> {}
@@ -843,7 +966,7 @@ class DefaultPlanner(
         // an earlier undo already removed. The folder itself stays (there is no op that removes one).
         fun tidyWatchdogFiles(records: List<ChangeRecord>) {
             val tokens = records.sortedWith(UndoOrder.CHRONOLOGICAL).mapNotNull { c ->
-                when (val op = c.op) { is Op.ArmHomeWatchdog -> op.token; is Op.ConfirmHome -> op.token; else -> null }
+                when (val op = c.op) { is Op.ArmHomeWatchdog -> op.token; is Op.ArmHelperWatchdog -> op.token; is Op.ConfirmHome -> op.token; else -> null }
             }.distinct()
             val gone = records.mapNotNull { (it.op as? Op.RemoveFile)?.path }.toSet()
             var first = true
@@ -920,6 +1043,16 @@ class DefaultPlanner(
 
     companion object {
         const val SECTION_HOME = "home_takeover"
+        // RFC-HELPER-1 (test build): the Home button helper's guarded section and group.
+        const val SECTION_HELPER = "home_helper"
+        const val GROUP_HELPER = "helper"
+        const val HELPER_BIND_SECONDS = 3
+        const val HELPER_CHECK_SECONDS = 2
+        const val NARRATION_HELPER_ON = "Switching on the Home button helper"
+        const val NARRATION_HELPER_ON_WITH_OTHERS = "Switching on the Home button helper (the TV's other accessibility services stay as they are)"
+        const val NARRATION_HELPER_OFF = "Switching off the Home button helper"
+        const val REASON_HELPER_AND_SWITCH = "the Home button helper keeps the TV's own home screen, so it does not go with the home screen switch"
+        const val REASON_HELPER_LOOK = "the Home button helper needs the look that names the TV's own home screen, and it could not be made"
         const val APK_NAME_HEX = 40
         const val GROUP_CUSTOM = "custom"
         const val GROUP_LAUNCHER = "launcher"
@@ -947,6 +1080,8 @@ class DefaultPlanner(
         const val REASON_OLD_ANDROID = "the new home screen needs Android 8 or newer, and this TV has an older Android"
         const val REASON_WIZARD_WHILE_OURS = "on this TV the first-run setup wizard takes the Home button back; use the TV's own home screen first"
         const val REASON_HOME_SCREEN = "it is the TV's own home screen; only the home screen switch changes it"
+        // Issue #2028: Home answers to a home screen we do not know, ranked above ours (StockHome.unknownAboveOurs).
+        const val REASON_UNKNOWN_HOME_ABOVE = "the TV's home screen is not one of the known ones, and the TV ranks it above the new one, so the switch could never take Home (issue #2028)"
         // Issue #2: Fire OS and the China-market TCL firmware take no other home screen.
         const val REASON_TV_REFUSES_HOME = "this TV only allows its own home screen, so the new one is not installed and the switch is not possible"
         const val REASON_FIRE_OS_HOME = "it is Fire OS's own home screen, which Fire OS never lets anyone switch off"
@@ -959,6 +1094,7 @@ class DefaultPlanner(
         const val TITLE_HOME = "Needed for the new home screen"
         const val DESCRIPTION_OLD_HOME = "The old home screen. Switched off only after the new one works."
         const val DESCRIPTION_WIZARD = "We switch it back on if you ever undo or reset the TV."
+        const val DESCRIPTION_FACTORY_HOME = "A factory test app that also answers the Home button. Switched off first, so Home never lands on it."
         const val REASON_SWITCH_PART = "part of the home screen switch; it comes back on if the switch is undone"
         // STORES-PLAN 1 (keepUpdatesOn): the Google Play build keeps the TV's updaters on.
         const val REASON_UPDATES = "it brings the TV's software and security updates, which this version of the app always keeps on"

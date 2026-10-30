@@ -43,6 +43,8 @@ import tv.cleanyour.core.flows.AppChoice
 import tv.cleanyour.core.flows.ChipState
 import tv.cleanyour.core.flows.DoneSummary
 import tv.cleanyour.core.flows.HomeBlock
+import tv.cleanyour.core.flows.HomeKept
+import tv.cleanyour.core.flows.HomeRole
 import tv.cleanyour.core.flows.LookDocs
 import tv.cleanyour.core.flows.LookDraft
 import tv.cleanyour.core.flows.LookPicture
@@ -52,6 +54,7 @@ import tv.cleanyour.core.flows.Finishing
 import tv.cleanyour.core.flows.NoSetupActions
 import tv.cleanyour.core.flows.NothingWhy
 import tv.cleanyour.core.flows.Reconnect
+import tv.cleanyour.core.flows.RestartRead
 import tv.cleanyour.core.flows.RestartState
 import tv.cleanyour.core.flows.SetupExtras
 import tv.cleanyour.core.flows.SetupState
@@ -79,7 +82,7 @@ import tv.cleanyour.ui.design.component.rememberUndoSnackbarState
 
 // Every state of :feature:setup's screens (PRODUCT-SPEC 4: probing, S3, S3a, S3b, S4a, S4b, S4c to
 // S4e, S5, and the stops of section 4 that live here: install failure, TV refuses other home
-// screens, TV not back after a restart), with the M5 cards: "We put the old home screen back"
+// screens, TV not back after a restart), with the M5 cards: "We put the TV's own home screen back"
 // (HOME_PUT_BACK), the resume card for a Manage change and "Reconnect to the TV to put the old
 // home screen back" (R-11). The copy comes from this module's strings, as the app formats it.
 
@@ -143,7 +146,7 @@ private val unknownPlan = plan(summary(listOf(
 // The emulator TV (round 3): an unknown model where nothing is sure, so the one switch-off is the
 // TV's own home screen inside the home screen switch, listed and counted like any other.
 private val homeSwitchGroup = GroupSummary("home", "Needed for the new home screen", off = 1, total = 1, rows = listOf(
-    row("com.google.android.tvlauncher", "Android TV home", "The old home screen. Switched off only after the new one works.",
+    row("com.google.android.tvlauncher", "Android TV home", "The TV's own home screen. Switched off only after the new one works.",
         protectedRow = true, why = "part of the home screen switch; it comes back on if the switch is undone"),
 ))
 // The Setup plan sends the dock and the look before the switch (RFC-DOCK-1), so its config.json
@@ -175,6 +178,22 @@ private val noHomePlan = plan(summary(listOf(
     GroupSummary("tracking", "Tracking and analytics", off = 7, total = 7, rows = emptyList()),
     GroupSummary("nobody", "Apps nobody asked for", off = 3, total = 3, rows = emptyList()),
 ), home = false))
+// 0.4.7: the Google TV Streamer's plan as the planner summarises it when the TV keeps its own home
+// screen (CASTING): its profile's home group lists the setup wizard and the home screen as protected
+// rows, with the planner's own reasons, which the sheet replaces by role (HomeRole).
+private val keptHomeGroup = GroupSummary("home", "Home screen", off = 0, total = 2, rows = listOf(
+    row("com.google.android.tungsten.setupwraith", "Google TV setup wizard", "The first-run setup", off = false, protectedRow = true,
+        why = "the first-run setup wizard is only switched off as part of the home screen switch"),
+    row("com.google.android.apps.tv.launcherx", "Google TV home", "Google TV's own home screen", off = false, protectedRow = true,
+        why = "it is the TV's own home screen; only the home screen switch changes it"),
+))
+private val keptPlan = plan(summary(listOf(
+    trackingGroup.copy(rows = trackingGroup.rows + row("com.google.android.tv.remote.service", "Remote usage logging", "Logs what the remote does", off = false)), extrasGroup.copy(title = "Google extras"), keptHomeGroup,
+), home = false).copy(keepNames = listOf("Netflix", "YouTube")))
+private val keptExtras = SetupExtras(tvName = "Google TV Streamer", chip = ChipState.CONNECTED, brand = "Google", homePossible = false, homeBlock = HomeBlock.CASTING,
+    commands = listOf("pm disable-user --user 0 com.xiaomi.analytics", "pm disable-user --user 0 com.alphonso.tv"),
+    draft = WizardDraft(3, Level.SIMPLE, emptySet(), emptySet(), null, null, false, null, NOW),
+    homeRoles = mapOf(PackageName("com.google.android.tungsten.setupwraith") to HomeRole.WIZARD, PackageName("com.google.android.apps.tv.launcherx") to HomeRole.OWN_HOME))
 
 private val section = GuardedSection("home", 0, 0, RunToken("0123456789abcdef"), confirmWindowMs = 90_000,
     expectedHome = Samples.launcherComponent, rollbackIfFocus = emptySet(), rollback = emptyList())
@@ -302,7 +321,9 @@ private val rowsPlan = plan(summary(listOf(adsGroup, trackingGroup, nobodyGroup,
 private fun found(plan: Plan = fullPlan, level: Level = Level.SIMPLE) = SetupState.Found(tvId, plan, level, sheet = null)
 
 private fun running(lines: List<NarrationLine>, percent: Int, thumbnail: ByteArray?) =
-    SetupState.Working(tvId, RunState.Running(fullPlan, step = 3, narration = lines, percent = percent, thumbnail = thumbnail), thumbnail)
+    SetupState.Working(tvId, RunState.Running(fullPlan.copy(sections = listOf(section)), step = 3, narration = lines, percent = percent, thumbnail = thumbnail), thumbnail)
+private fun runningNoSwitch(lines: List<NarrationLine>, percent: Int, thumbnail: ByteArray?) =
+    SetupState.Working(tvId, RunState.Running(noHomePlan, step = 3, narration = lines, percent = percent, thumbnail = thumbnail), thumbnail)
 
 private fun checkState(thumbnail: ByteArray?, deadlineAheadMs: Long = 84_000, homeCheck: Boolean? = null, s: GuardedSection = section) =
     SetupState.Check(tvId, RunState.AwaitingConfirm(fullPlan, s, NOW + deadlineAheadMs, homeCheck, thumbnail), thumbnail, dock)
@@ -378,7 +399,11 @@ object SetupShots {
         Shot("found_unknown_model") { Setup(found(unknownPlan), connected.copy(unknownModel = true)) },
         Shot("found_unknown_home_switch_only") { Setup(found(homeSwitchOnlyPlan), connected.copy(unknownModel = true)) },
         Shot("found_no_screen_lock") { Setup(found(), connected.copy(noScreenLock = true)) },
-        Shot("found_tv_refuses_home") { Setup(found(noHomePlan), connected.copy(tvName = "TCL C635", homePossible = false)) },
+        // 0.4.7 (HomeKept): the TV keeps its own home screen; the outcome row sits under the headline
+        // with the short reason and Why. UX finding 12: the brand from the TV's facts, not its nickname.
+        Shot("found_tv_refuses_home") { Setup(found(noHomePlan), connected.copy(tvName = "Bedroom", brand = "TCL", homePossible = false, homeBlock = HomeBlock.TV_REFUSES)) },
+        // Issue #2: a Fire TV Edition set is named for Fire OS.
+        Shot("found_home_fire_tv") { Setup(found(noHomePlan), connected.copy(tvName = "Insignia Fire TV", brand = "Insignia", fireTv = true, homePossible = false, homeBlock = HomeBlock.TV_REFUSES)) },
         // RF-PROFILES-63 P1 and P2: Android 7 (the clean-up only), and a profile with no known stock home.
         Shot("found_home_old_android") { Setup(found(noHomePlan), connected.copy(tvName = "Sony KD-55X8509C", homePossible = false, homeBlock = HomeBlock.OLD_ANDROID)) },
         Shot("found_home_unknown_stock") { Setup(found(noHomePlan), connected.copy(tvName = "Mi TV ASTP1", homePossible = false, homeBlock = HomeBlock.UNKNOWN_HOME)) },
@@ -390,11 +415,35 @@ object SetupShots {
         Shot("found_home_vendor_home") { Setup(found(noHomePlan), connected.copy(tvName = "THOMSON SPPL 2K ANDROID TV", homePossible = false, homeBlock = HomeBlock.VENDOR_HOME)) },
         // beta4 (issue #945): PatchWall stays on while its feeds are off, not by this app.
         Shot("found_home_patchwall_feeds") { Setup(found(noHomePlan), connected.copy(tvName = "Xiaomi MiTV-AXSO2", homePossible = false, homeBlock = HomeBlock.PATCHWALL_FEEDS)) },
+        // The Google TV Streamer (CASTING): the outcome, the casting reason, and the Why sheet.
+        Shot("found_home_casting") { Setup(found(noHomePlan), connected.copy(tvName = "Google TV Streamer", brand = "Google", homePossible = false, homeBlock = HomeBlock.CASTING)) },
+        Shot("found_why_kept_sheet") {
+            SheetFrame({ Setup(found(noHomePlan), connected.copy(tvName = "Google TV Streamer", brand = "Google", homePossible = false, homeBlock = HomeBlock.CASTING)) }, maxHeight = 560.dp) {
+                WhyKeptContent(HomeKept.Blocked(HomeBlock.CASTING, brand = "Google"))
+            }
+        },
+        // An unlisted TV whose setup wizard has to stay on: a list is what would change it.
+        Shot("found_why_kept_sheet_list") {
+            SheetFrame({ Setup(found(noHomePlan), connected.copy(tvName = "Hisense 32A4200G", brand = "Hisense", unknownModel = true, homePossible = false, homeBlock = HomeBlock.WIZARD_STAYS_ON)) }, maxHeight = 600.dp) {
+                WhyKeptContent(HomeKept.Blocked(HomeBlock.WIZARD_STAYS_ON, brand = "Hisense", unlisted = true), onHelpAddTv = {})
+            }
+        },
+        // UX finding 5, PM 7: nothing to switch off on a kept TV: Done, no "Make it clean"; an unlisted
+        // TV offers Help add this TV, and says when its report was sent (SentReports).
+        Shot("found_zero_kept") { Setup(found(zeroPlan.copy(summary = zeroPlan.summary.copy(homeScreenPossible = false))), connected.copy(tvName = "Sony KD-55X8509C", homePossible = false, homeBlock = HomeBlock.OLD_ANDROID)) },
+        Shot("found_zero_kept_unknown") {
+            Setup(found(zeroPlan.copy(summary = zeroPlan.summary.copy(homeScreenPossible = false))),
+                connected.copy(tvName = "Hisense 32A4200G", brand = "Hisense", unknownModel = true, homePossible = false, homeBlock = HomeBlock.WIZARD_STAYS_ON, reportSentAtMs = NOW - 86_400_000))
+        },
         Shot("found_starting") { Setup(found(), connected.copy(starting = true)) },
         // D36 (RF-LAUNCHER-240 F1): the plan replaces a home screen app signed with another key.
         Shot("found_replaces_launcher") { Setup(found(fullPlan.copy(summary = fullPlan.summary.copy(replacesLauncher = true)))) },
         // Issue #275: a TCL Google TV, whose remote's gear, Netflix and YouTube buttons need Google TV's home.
         Shot("found_tcl_remote_keys") { Setup(found(), connected.copy(tvName = "TCL 55C755", tclRemoteKeys = true)) },
+        // RFC-HELPER-1 (test build): the Home button helper chosen on a casting TV: the redirect's outcome, never "keeps its own".
+        // #251: a Google TV cleaned before, nothing left to switch off: Customise still offers the helper.
+        Shot("found_zero_kept_helper_offer") { Setup(found(zeroPlan.copy(summary = zeroPlan.summary.copy(homeScreenPossible = false))), connected.copy(tvName = "Google TV Streamer", brand = "Google", homePossible = false, homeBlock = HomeBlock.WIZARD_STAYS_ON, helperOffer = true)) },
+        Shot("found_helper") { Setup(found(), connected.copy(tvName = "Google TV Streamer", brand = "Google", homePossible = false, homeBlock = HomeBlock.CASTING, helperOffer = true, helperOn = true)) },
 
         // S3a Customise: Simple with the other groups collapsed; Custom with every group open, the
         // package names and the undo snackbar; the "Why?" sheet
@@ -432,6 +481,23 @@ object SetupShots {
             }
         },
         Shot("customise_why_sheet") { SheetFrame({ Setup(found()) }, maxHeight = 360.dp) { WhyContent(found()) } },
+        // 0.4.7 (UX findings 1, 3): the Google TV Streamer keeps its own home screen: the outcome card
+        // replaces the Home screen group, and its wizard and home screen rows say they stay.
+        Shot("customise_sheet_kept", 1100.dp) {
+            SheetFrame({ Setup(found(keptPlan), keptExtras) }, maxHeight = 1080.dp) {
+                CustomiseContent(found(keptPlan), keptExtras, NoSetupActions, rememberUndoSnackbarState(), {}, {}, initiallyOpen = emptyList())
+            }
+        },
+        Shot("customise_why_sheet_kept") { SheetFrame({ Setup(found(keptPlan), keptExtras) }, maxHeight = 420.dp) { WhyContent(found(keptPlan), keptExtras) } },
+        // RFC-HELPER-1 (test build): Customise's Home button helper, switched on, and its consent.
+        // 0.4.7: a plan of switch-offs and the look only (the helper plan has no "Needed for the new home screen" group and no set-home-activity).
+        Shot("customise_sheet_helper", 1300.dp) {
+            SheetFrame({ Setup(found()) }, maxHeight = 1280.dp) {
+                CustomiseContent(found(), customising.copy(commands = commands.dropLast(1), helperOffer = true, helperOn = true),
+                    NoSetupActions, rememberUndoSnackbarState(), {}, {}, initiallyOpen = emptyList())
+            }
+        },
+        Shot("customise_helper_consent") { SheetFrame({ Setup(found()) }) { HomeHelperConsent({}, {}) } },
 
         // S3b Your dock, with room and full; the look picker
         Shot("dock_sheet") { SheetFrame({ Setup(found()) }) { DockContent(dockState(dockApps.take(3)), dockApps + otherApps, {}) } },
@@ -472,6 +538,8 @@ object SetupShots {
         Shot("working_58") { Setup(running(narration, 58, remember { fakeShot() }), working) },
         Shot("working_all_narration_states") { Setup(running(narrationAllStates, 72, remember { fakeShot() }), working) },
         Shot("working_no_thumbnail") { Setup(running(narration, 12, null), working) },
+        // UX finding 10: a plan without the home screen switch ends with the buzz "done".
+        Shot("working_no_check") { Setup(runningNoSwitch(narration.take(4), 40, remember { fakeShot() }), working) },
         Shot("working_back_highlights_stop") { Setup(running(narration, 58, remember { fakeShot() }), working.copy(highlightStop = true)) },
         Shot("working_rolling_back") { Setup(running(narration, 58, remember { fakeShot() }), working.copy(rollingBack = true, highlightStop = true)) },
 
@@ -481,24 +549,21 @@ object SetupShots {
         Shot("check_no_thumbnail") { Setup(checkState(null)) },
         Shot("check_two_minute_window") { Setup(checkState(null, deadlineAheadMs = 118_000, s = longSection)) },
 
-        // S4c Stopped: the old home screen is back (UX 4.7), each case
-        Shot("stopped_home_setupwraith") {
-            Stopped(home(StopCase.HOME_SETUPWRAITH, R.string.stop_home_setupwraith_title, R.string.stop_home_setupwraith_body,
-                R.string.stop_home_setupwraith_primary, R.string.stop_home_setupwraith_secondary), connected.copy(commands = commands))
-        },
-        // D3: the wizard may have saved the TV's Wi-Fi, so it stays on and the card says why.
+        // S4c Stopped: the TV's own home screen is back (UX 4.7), each case. 0.4.7 (UX findings 16, 23):
+        // the wizard card is the Wi-Fi card: "Keep the TV's own home screen" first, then "I've done
+        // that, try again" (the wizard owns the Wi-Fi) or "Try again" (the TV could not say).
         Shot("stopped_home_setupwraith_wifi") {
             Stopped(home(StopCase.HOME_SETUPWRAITH, R.string.stop_home_setupwraith_title, R.string.stop_home_setupwraith_wifi_body,
-                R.string.stop_home_setupwraith_wifi_primary, R.string.stop_home_setupwraith_secondary), connected.copy(commands = commands))
+                R.string.stop_home_setupwraith_secondary, R.string.stop_home_setupwraith_wifi_secondary), connected.copy(commands = commands))
         },
         // RF-LAUNCHER-240 F6: the TV could not say who saved its Wi-Fi.
         Shot("stopped_home_setupwraith_wifi_unknown") {
             Stopped(home(StopCase.HOME_SETUPWRAITH, R.string.stop_home_setupwraith_title, R.string.stop_home_setupwraith_wifi_unknown_body,
-                R.string.stop_home_setupwraith_wifi_primary, R.string.stop_home_setupwraith_secondary), connected.copy(commands = commands))
+                R.string.stop_home_setupwraith_secondary, R.string.stop_home_user_said_no_primary), connected.copy(commands = commands))
         },
         Shot("stopped_home_rolling_back") {
-            Stopped(home(StopCase.HOME_SETUPWRAITH, R.string.stop_home_setupwraith_title, R.string.stop_home_setupwraith_body,
-                R.string.stop_home_setupwraith_primary, R.string.stop_home_setupwraith_secondary), connected.copy(rollingBack = true))
+            Stopped(home(StopCase.HOME_SETUPWRAITH, R.string.stop_home_setupwraith_title, R.string.stop_home_setupwraith_wifi_body,
+                R.string.stop_home_setupwraith_secondary, R.string.stop_home_setupwraith_wifi_secondary), connected.copy(rollingBack = true))
         },
         Shot("stopped_home_other_launcher") {
             Stopped(home(StopCase.HOME_OTHER_LAUNCHER, R.string.stop_home_other_launcher_title, R.string.stop_home_other_launcher_body,
@@ -526,7 +591,7 @@ object SetupShots {
             Stopped(home(StopCase.HOME_TIMED_OUT, R.string.stop_home_timed_out_title, R.string.stop_home_timed_out_body_off,
                 R.string.stop_home_timed_out_primary, R.string.stop_home_timed_out_secondary, args = mapOf("count" to 3)), connected.copy(commands = commands))
         },
-        // M5: step R put the old home screen back after a lost connection (D-W8-16)
+        // M5: step R put the TV's own home screen back after a lost connection (D-W8-16)
         Shot("stopped_home_put_back") { Stopped(homePutBack(), connected.copy(commands = commands)) },
         Shot("stopped_details_sheet") { SheetFrame({ Stopped(homePutBack(), connected.copy(commands = commands)) }, maxHeight = 420.dp) { DetailsContent(commands) } },
 
@@ -591,6 +656,17 @@ object SetupShots {
         // beta3 QA: a later run names the first restore point, the one Undo everything goes back to.
         Shot("done_restore_point_earlier") { Setup(done(restoreEarlier = true)) },
         Shot("done_without_home") { Setup(done(off = 16, home = false)) },
+        // 0.4.7 (UX findings 6, 7, 9): the TV keeps its own home screen: "Clean-up done", the outcome in
+        // the lead with Why, no card to add, and after the restart "Home screen is the TV's own".
+        Shot("done_home_kept") { Setup(done(off = 16, home = false), connected.copy(homePossible = false, homeBlock = HomeBlock.CASTING, brand = "Google", tvName = "Google TV Streamer")) },
+        Shot("done_home_kept_back_after_restart") {
+            Setup(done(off = 16, home = false, restart = RestartState.Back(72_000)), connected.copy(homePossible = false, homeBlock = HomeBlock.WIZARD_STAYS_ON, unknownModel = true, tvName = "Hisense 32A4200G", brand = "Hisense"))
+        },
+        // UX finding 18: the switch held but the look did not reach the TV.
+        Shot("done_look_failed") { Setup(done(), connected.copy(doneLookFailed = true)) },
+        // RFC-HELPER-1 (test build): Done after the Home button helper, and after a restart.
+        Shot("done_helper") { Setup(done(), connected.copy(homePossible = false, homeBlock = HomeBlock.CASTING, helperOn = true)) },
+        Shot("done_helper_back_after_restart") { Setup(done(restart = RestartState.Back(72_000)), connected.copy(homePossible = false, homeBlock = HomeBlock.CASTING, helperOn = true)) },
         Shot("done_skipped_one") { Setup(done(off = 22, skipped = listOf("Play Games"))) },
         Shot("done_skipped_many") { Setup(done(off = 20, skipped = listOf("Play Games", "Mi Cast", "Mi Home"))) },
         // Issue #15: nothing to switch off and no home switch, on a TV we know and on one we don't.
@@ -602,6 +678,11 @@ object SetupShots {
         Shot("done_restarting") { Setup(done(restart = RestartState.Restarting(NOW))) },
         Shot("done_restarting_slow") { Setup(done(restart = RestartState.Restarting(NOW)), connected.copy(restartSlow = true)) },
         Shot("done_back_after_restart") { Setup(done(restart = RestartState.Back(72_000)), connected.copy(restartReenabled = 2)) },
+        // 0.4.8 (Restarts): the restart held, with "Tell us it worked"; it failed, with Report a problem.
+        Shot("done_restart_held", 1100.dp) { Setup(done(restart = RestartState.Back(72_000)), connected.copy(restartRead = RestartRead.HELD)) },
+        Shot("done_restart_failed", 1100.dp) { Setup(done(restart = RestartState.Back(72_000)), connected.copy(restartRead = RestartRead.FAILED)) },
+        // 0.4.8 (PLAN item 3): "This is your TV now" after Setup sent the look.
+        Shot("done_tv_now", 1300.dp) { Setup(done(), connected.copy(doneShot = remember { fakeShot() })) },
         Shot("done_not_back") {
             val c = card(StopCase.NOT_BACK_AFTER_RESTART, R.string.stop_not_back_title, R.string.stop_not_back_body, R.string.stop_not_back_primary, R.string.stop_not_back_secondary)
             Setup(done(restart = RestartState.NotBack(300_000)), offline.copy(card = c.copy(body = c.body + "\n\n" + stringResource(R.string.stop_not_back_auto))))

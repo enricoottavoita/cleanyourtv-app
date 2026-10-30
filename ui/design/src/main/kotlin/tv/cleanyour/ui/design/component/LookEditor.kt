@@ -132,6 +132,8 @@ data class LookEditorState(
     // What of `extras` acts in this look, and what would act if it were on (LookDraft's, from LookRules).
     val actingExtras: LookExtras = LookExtras.DEFAULT,
     val offeredExtras: LookExtras = LookExtras.DEFAULT,
+    // 0.4.8: the Look sheet offers "Put it on the TV" only when the send would change something (LookDraft.canSend).
+    val canSend: Boolean = true,
 ) {
     // A photo of the person's (kept, new or the earlier look's) rather than a gallery picture.
     val photo: Boolean get() = picture == MINE || picture == NEW || picture == EARLIER

@@ -135,6 +135,9 @@ class UrlConnectionFetcherTest {
         assertNull(e.httpCode)
         assertTrue(e.cause.toString(), e.cause is SSLException)
         assertTrue("no request reached the server", seen.isEmpty())
+        // 0.4.7 (issue #818): the message carries the TLS stack's own words, on one printable line.
+        val m = e.message.orEmpty()
+        assertTrue(m, m.startsWith("TLS failed: ") && m.length > "TLS failed: SSLHandshakeException".length && m.all { it in ' '..'~' } && m.length <= 200)
     }
 
     @Test fun controlAClientTrustingTheUserCaGetsTheFile() = runBlocking {

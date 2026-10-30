@@ -229,6 +229,8 @@
     <string name="cyt_look_earlier_chosen">The earlier look is chosen. Tap Put it on the TV to send it.</string>
     <string name="cyt_look_tiles_note">Apps show as plain tiles here. On the TV they show their own art.</string>
     <string name="cyt_look_use">Put it on the TV</string>
+    <!-- 0.4.8: the Look sheet's footer when nothing changed (no Put it on the TV) -->
+    <string name="cyt_look_on_tv">The TV has this look.</string>
     <string name="cyt_look_done">Done</string>
     <string name="cyt_look_tv_note">Changes made on the TV with the remote will be replaced.</string>
     <string name="cyt_look_leave_title">Leave without sending?</string>

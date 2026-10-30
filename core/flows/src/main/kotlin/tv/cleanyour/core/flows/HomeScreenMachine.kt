@@ -2,6 +2,7 @@ package tv.cleanyour.core.flows
 
 import java.time.LocalDate
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import tv.cleanyour.core.engine.RunStatus
 import tv.cleanyour.core.model.BlobRef
@@ -11,6 +12,7 @@ import tv.cleanyour.core.model.PackageName
 import tv.cleanyour.core.model.TvId
 import tv.cleanyour.core.ops.HomePlaceholder
 import tv.cleanyour.core.planner.FireOs
+import tv.cleanyour.core.planner.HomeHelper
 import tv.cleanyour.core.planner.Plan
 import tv.cleanyour.core.planner.PlanRequest
 import tv.cleanyour.core.planner.TclGoogleTv
@@ -38,6 +40,10 @@ data class AppChoice(val pkg: PackageName, val name: String)
 // `helpAddTv`: a list for this TV is what is missing; "Help add this TV" makes its report.
 // `earlier` (beta3): an earlier Setup decided it, with another version or list (HomeDecision.earlier),
 // so the screen says that instead of a reason that may no longer hold, and offers Setup again.
+// `installed` (0.4.7, UX finding 8): the new home screen is on the TV but not in use (the switch was
+// tried and the TV's own home screen is back, or the person chose the TV's own): "Try the switch
+// again" runs Setup again; the dock and the look wait until it is in use.
+// `reportSentAtMs` (0.4.7): this TV's report was sent then (SentReports), for the next step's line.
 data class NotOnTv(
     val reason: HomeBlock?,
     val brand: String,
@@ -46,6 +52,8 @@ data class NotOnTv(
     val setupAgain: Boolean = false,
     val helpAddTv: Boolean = false,
     val earlier: Boolean = false,
+    val installed: Boolean = false,
+    val reportSentAtMs: Long? = null,
 )
 
 // 0.4.0: a picture of the Picture row: a gallery picture by id, with its file for the thumbnail
@@ -102,6 +110,14 @@ data class HomeScreenState(
     val lookFailed: Boolean = false,
     // look2 W1: a look send runs with the sheet closed; the Look row reads "Sending..." while busy.
     val lookSending: Boolean = false,
+    // RFC-HELPER-1 (test build): the Home button helper's card, null when nothing of it is on the TV.
+    val helper: HelperCard? = null,
+    // 0.4.8 (beta1 QA): the newest read of the TV has its own home screen (`stock`) answering Home already, so "Use
+    // the TV's own home screen" has nothing to do (after the helper's Switch off, for one).
+    val stockIsHome: Boolean = false,
+    // 0.4.8 (PLAN item 3): "This is your TV now", the TV's screenshot after a look went to it from this page; null
+    // before a send, while one runs, or when the TV gave no picture.
+    val lookShot: ByteArray? = null,
 ) {
     val waiting: Int get() = waitingApps.size
 }
@@ -128,12 +144,16 @@ sealed interface HomeScreenIntent {
     data object UpdateHomeScreen : HomeScreenIntent    // D4
     data object RunSetupAgain : HomeScreenIntent       // 0.3.3 D2, NotOnTv.setupAgain
     data object HelpAddTv : HomeScreenIntent           // 0.3.3 D2, NotOnTv.helpAddTv
+    data object HelperOff : HomeScreenIntent           // RFC-HELPER-1: the helper's "Switch off"
 }
 
 class HomeScreenMachine(
     private val d: ManageDeps,
     scope: CoroutineScope,
     private val tvId: TvId,
+    // 0.4.8: opened from Done's "Not right? Send it again": the saved look goes to the TV again once the page has
+    // loaded, as "Restore mine" sends it (the person's tap on Done is the ask; the write asks for the credential).
+    private val again: Boolean = false,
 ) : Machine<HomeScreenState, HomeScreenIntent, ManageEffect>(HomeScreenState(themes = offeredThemes(d)), scope) {
 
     private val writer = TvWriter(d)
@@ -145,6 +165,7 @@ class HomeScreenMachine(
     private data class UpdatePreview(val plan: Plan?)
     private class OwnPictureStaged(val ref: BlobRef, val dim: Int, val jpeg: ByteArray)
     private data class LookResult(val sent: Boolean)
+    private class LookShot(val png: ByteArray?)
     private var staged: ByteArray? = null   // the bytes of state.newPicture, kept once the TV has them
     private var updated = false   // D4: this screen updated the launcher; the stored snapshot does not know yet
     // look2: what the Look sheet works from, as the last load read it: the saved choice (what was
@@ -156,11 +177,11 @@ class HomeScreenMachine(
     private var kept: LookDraft? = null      // the draft of a send in flight, or of one that failed (OpenLook reopens it)
     private var sending = false              // one send per UseLook
 
-    init { scope.launch { load(); checkDrift() } }
+    init { scope.launch { load(); checkDrift(); if (again && state.value.notOnTv == null) send(HomeScreenIntent.RestoreMine) } }
 
     override fun reduce(state: HomeScreenState, event: Any): HomeScreenState = when (event) {
         is Loaded -> event.s.copy(busy = state.busy, stockPreview = state.stockPreview, drift = state.drift, updatePreview = state.updatePreview,
-            newPicture = state.newPicture, newDim = state.newDim, lookFailed = state.lookFailed, lookSending = state.lookSending).let { s ->
+            newPicture = state.newPicture, newDim = state.newDim, lookFailed = state.lookFailed, lookSending = state.lookSending, lookShot = state.lookShot).let { s ->
             saved = event.saved; earlier = event.earlier; cards = event.cards; keyNames = event.keyNames
             s.copy(look = state.look?.let { drafts.refresh(it, lookContext(s)) })
         }
@@ -180,8 +201,12 @@ class HomeScreenMachine(
         // Closing the sheet drops a photo made in it and its dim, and a draft kept from a failed send.
         HomeScreenIntent.CloseLook -> { kept = null; state.copy(look = null, newPicture = null, newDim = state.ownDim, lookFailed = false) }
         // "Put it on the TV" closes the sheet; the draft and a new photo stay until the result.
-        HomeScreenIntent.UseLook -> state.copy(look = null, lookFailed = false,
+        // 0.4.8 (beta1 QA): only a draft that would change something is sent (LookDraft.canSend; the sheet offers no
+        // button otherwise); the screenshot of the last send goes with a new one.
+        HomeScreenIntent.UseLook -> if (state.look?.canSend == false) state else state.copy(look = null, lookFailed = false, lookShot = null,
             lookSending = state.lookSending || (state.look != null && state.busy == null && state.notOnTv == null))
+        HomeScreenIntent.RestoreMine, is HomeScreenIntent.SetDock, is HomeScreenIntent.SetTheme -> state.copy(lookShot = null)
+        is LookShot -> state.copy(lookShot = event.png)
         is LookResult -> if (event.sent) state.copy(newPicture = null, newDim = state.ownDim, lookFailed = false, lookSending = false)
             else state.copy(lookFailed = true, lookSending = false)
         // A photo made for a sheet that has closed since is dropped.
@@ -207,7 +232,7 @@ class HomeScreenMachine(
             apps = dock, others = state.apps.filter { it.pkg !in inDock },
             mine = state.ownPicture?.let { LookPicture.Of(it, state.ownDim) }, new = state.newPicture?.let { LookPicture.Of(it, state.newDim) },
             earlier = earlier, sent = saved, tv = lookTv(state), cards = cards, keyNames = keyNames, tvChanged = state.drift,
-            pushDock = saved?.dock,
+            pushDock = saved?.dock, dockChosen = saved?.dockChosen ?: true,
         )
     }
 
@@ -223,11 +248,12 @@ class HomeScreenMachine(
             // a row), so a new dock never loses them. Apps in a row stays the saved one.
             // look2: a saved choice in the new form is pushed again in its own form; a legacy one
             // keeps its 0.4.0 bytes (LegacyLook) until the next send.
+            // 0.4.7: the dock is the person's own from now on (HomeChoice.dockChosen): fill_dock false.
             is HomeScreenIntent.SetDock -> scope.launch {
                 val tail = after.waitingApps.map { it.pkg }.filter { it !in event.dock }
                 val choice = savedChoice()
-                if (choice?.isNew == true) pushSaved(choice, event.dock + tail)
-                else apply(event.dock + tail, after.themeId, after.pictureId, columns = savedColumns())
+                if (choice?.isNew == true) pushSaved(choice.copy(dockChosen = true), event.dock + tail)
+                else apply(event.dock + tail, after.themeId, after.pictureId, columns = savedColumns(), dockChosen = true)
             }
             // RF-LAUNCHER-250 F4: a new look and "Restore mine" push the dock as it was saved, as
             // ModulesMachine does, not the list as the TV shows it now (an app since gone or switched
@@ -237,7 +263,7 @@ class HomeScreenMachine(
             is HomeScreenIntent.SetTheme -> if (Looks.offered(event.id, d.clock.today())) scope.launch { apply(savedDock() ?: after.dock.map { it.pkg }, event.id, event.picture, columns = null) }
             // look2: the draft goes to the TV in the new form; it and a new photo are kept until the
             // result, so a failed send loses neither (OpenLook reopens the draft).
-            HomeScreenIntent.UseLook -> before.look?.takeUnless { sending }?.let { l ->
+            HomeScreenIntent.UseLook -> before.look?.takeUnless { sending || !it.canSend }?.let { l ->
                 val photo = when (l.picture) {
                     LookPicture.NEW_ID -> staged?.let { b -> before.newPicture?.let { NewPhoto(it, b, before.newDim) } }
                     else -> null
@@ -259,12 +285,14 @@ class HomeScreenMachine(
                 attempt { OwnPicture.stage(d, event.jpeg) }.onSuccess { send(OwnPictureStaged(it, dim, event.jpeg)) }
                     .onFailure { effect(ManageEffect.Snackbar(SnackKind.FAILED, "", false)) }
             }
-            HomeScreenIntent.PreviewStock -> after.stock?.let { stock -> scope.launch { send(Preview(writer.preview(tvId, PlanRequest.UseStockHome(stock)))) } }
-            HomeScreenIntent.UseStock -> after.stock?.let { stock -> scope.launch { useStock(stock) } }
+            // RFC-HELPER-1: while the helper is listed the TV's own home screen is Home already (HomeScreen hides the row).
+            HomeScreenIntent.PreviewStock -> after.stock?.takeIf { after.helper?.canSwitchOff != true }?.let { stock -> scope.launch { send(Preview(writer.preview(tvId, PlanRequest.UseStockHome(stock)))) } }
+            HomeScreenIntent.UseStock -> after.stock?.takeIf { after.helper?.canSwitchOff != true }?.let { stock -> scope.launch { useStock(stock) } }
             HomeScreenIntent.PreviewUpdate -> scope.launch { previewUpdate() }
             HomeScreenIntent.UpdateHomeScreen -> scope.launch { update() }
             HomeScreenIntent.RunSetupAgain -> if (after.notOnTv?.setupAgain == true) effect(ManageEffect.Navigate("setup/${tvId.value}"))
             HomeScreenIntent.HelpAddTv -> if (after.notOnTv?.helpAddTv == true) effect(ManageEffect.Navigate("report/tv/${tvId.value}"))
+            HomeScreenIntent.HelperOff -> if (after.helper?.canSwitchOff == true) scope.launch { helperOff() }
             else -> {}
         }
     }
@@ -315,7 +343,10 @@ class HomeScreenMachine(
             endedLook = ended, pictureId = pictureId, pictures = pictureOptions(),
             ownPicture = own, ownDim = choice?.dim ?: OwnPicture.DEFAULT_DIM,
             waitingApps = waiting, earlierPicture = earlierLook?.photo?.ref, sent = sentPreview, sentStyle = drafts.styleOf(choice, tvLook),
-            sentPicture = drafts.pictureIdOf(choice, tvLook), launcherVersionCode = versionCode, ramMb = ramMb, hasInputs = hasInputs),
+            sentPicture = drafts.pictureIdOf(choice, tvLook), launcherVersionCode = versionCode, ramMb = ramMb, hasInputs = hasInputs,
+            helper = HomeHelperFlows.card(snap, d.homeHelper),
+            stockIsHome = snap != null && (profile?.stockLaunchers?.firstOrNull() ?: attempt { HomePlaceholder.stockFromRecords(d.ledger.changes(tvId)) }.getOrNull())
+                ?.let { st -> snap.home.resolved?.pkg == st.pkg } == true),
             choice, earlierLook, cardsNow, keys))
     }
 
@@ -328,9 +359,25 @@ class HomeScreenMachine(
     // why, as for issue #8, instead of offering a dock and a look for it.
     private suspend fun notOnTv(tv: tv.cleanyour.core.model.Tv, snap: tv.cleanyour.core.model.Snapshot?): NotOnTv? {
         if (tv.launcher != null || snap == null) return null
+        // RFC-HELPER-1 (0.4.7-beta1 QA): with our HomeKeyService listed the TV's own home screen is Home on
+        // purpose and the new one is in use through the helper: the page shows the helper's card, Dock and Look.
+        if (HomeHelper.listed(snap)) return null
         val decision = attempt { d.homeDecisions.load(tvId) }.getOrNull()
         val reason = decision?.block?.let { b -> HomeBlock.entries.firstOrNull { it.name == b } }
-        if (Launcher.pkg in snap.packages && reason != HomeBlock.HOME_CHANGED) return null
+        val brand = LogCodes.clean(snap.facts.brand, 40).ifEmpty { tv.nickname }
+        val sent = attempt { d.sentReports.load(tvId) }.getOrNull()?.atMs
+        val ours = snap.packages[Launcher.pkg]
+        if (ours != null && reason != HomeBlock.HOME_CHANGED) {
+            // 0.4.7 (UX finding 8): the switch was planned (or nothing was recorded), our launcher is
+            // on the TV with our key (or one the probe could not read), and Home does not answer to
+            // it: installed, not in use. A launcher under our name with another key, one that is Home
+            // (a re-run on a TV already ours), or one left under a block Setup recorded keeps the rows.
+            if (reason != null) return null
+            val pin = runCatching { d.launcherPin.bundled() }.getOrNull()
+            val mine = ours.signer == null || pin == null || ours.signer == pin.signer
+            val inUse = decision?.alreadyOn == true || snap.home.resolved?.pkg == Launcher.pkg
+            return if (mine && !inUse) NotOnTv(reason = null, brand = brand, setupAgain = true, installed = true, reportSentAtMs = sent) else null
+        }
         // beta3 (issues #701, #1273): a block an earlier Setup decided, with an earlier version of
         // the app or another list than the TV resolves to now, may not hold any more: Setup again
         // decides it with this version. The TV's own facts (it refuses other home screens, its
@@ -340,8 +387,7 @@ class HomeScreenMachine(
         val now = attempt { d.profiles.resolveFor(snap) }.getOrNull()
         val earlier = reason != null && decision?.earlier(d.about.version, now) == true
         val unlisted = tv.profileId == null && (!earlier || now !is ProfileResolution.Exact)
-        if (earlier) return NotOnTv(reason = reason, brand = LogCodes.clean(snap.facts.brand, 40).ifEmpty { tv.nickname },
-            unlisted = unlisted, setupAgain = true, earlier = true)
+        if (earlier) return NotOnTv(reason = reason, brand = brand, unlisted = unlisted, setupAgain = true, earlier = true, reportSentAtMs = sent)
         val setupAgain = when (reason) {
             null, HomeBlock.NONE, HomeBlock.WIZARD_WIFI_UNKNOWN -> true
             // Issue #8: the person can make the TV's own home screen Home again, and on a TV an exact
@@ -356,11 +402,11 @@ class HomeScreenMachine(
             HomeBlock.PATCHWALL_FEEDS -> true
             else -> false
         }
-        val needsList = reason == HomeBlock.UNKNOWN_HOME || reason == HomeBlock.WIZARD_STAYS_ON || (reason == HomeBlock.WIZARD_WIFI && unlisted)
+        val needsList = reason != null && HomeKept.needsList(reason, unlisted)
         return NotOnTv(
-            reason = reason, brand = LogCodes.clean(snap.facts.brand, 40).ifEmpty { tv.nickname },
+            reason = reason, brand = brand,
             fireTv = reason == HomeBlock.TV_REFUSES && FireOs.isFireOs(snap.facts, snap), unlisted = unlisted,
-            setupAgain = setupAgain, helpAddTv = needsList && unlisted,
+            setupAgain = setupAgain, helpAddTv = needsList && unlisted, reportSentAtMs = sent,
         )
     }
 
@@ -421,6 +467,7 @@ class HomeScreenMachine(
 
         // Launcher 2.4 (versionCode 5) added Launcher settings on the TV (RF-LAUNCHER-240 F16).
         const val FIRST_WITH_TV_SETTINGS = 5L
+        const val LOOK_SHOT_DELAY_MS = 2_000L
         const val DEFAULT_LOOK = "default"
 
         // 0.4.0: the looks on offer today; a dated look (a festival) up to its last day.
@@ -454,15 +501,20 @@ class HomeScreenMachine(
     // 0.4.0 `columns`: the apps in a row to send, null for the look's own; it is kept only when it
     // differs from the look's own. The whole `dock` is kept (DockLayers.keep, up to 24 apps), not the
     // part this many in a row shows, so a smaller row never loses the rest of the order.
-    private suspend fun apply(dock: List<PackageName>, themeId: String?, picture: String?, photo: NewPhoto? = null, columns: Int? = null) {
-        val cards = Cards.current(d, tvId, d.homePrefs.load(tvId))
+    // 0.4.7 `dockChosen`: true for a dock the person just saved, null keeps the saved choice's.
+    private suspend fun apply(dock: List<PackageName>, themeId: String?, picture: String?, photo: NewPhoto? = null, columns: Int? = null,
+        dockChosen: Boolean? = null) {
+        val before = d.homePrefs.load(tvId)
+        val chosenDock = dockChosen ?: before?.dockChosen ?: true
+        val cards = Cards.current(d, tvId, before)
         val pictureId = picture.takeUnless { Looks.dated(themeId) }
         val sendsNew = pictureId == LookPicture.NEW_ID && photo != null
         val dim = if (sendsNew) photo!!.dim else state.value.ownDim
         val lookPicture = if (sendsNew) LookPicture.Of(photo!!.ref, photo.dim)
             else OwnPicture.lookPicture(d, tvId, pictureId.takeUnless { it == LookPicture.NEW_ID }, dim)
         val override = drafts.override(themeId, columns)
-        val look = attempt { Look.encode(d.encoder, d.blobs, theme(themeId), dock, cards, lookPicture, override) }.getOrNull()
+        val carry = LookCarry.of(d, tvId)
+        val look = attempt { Look.encode(d.encoder, d.blobs, theme(themeId), dock, cards, lookPicture, override, carry, fillDock = !chosenDock) }.getOrNull()
             ?: return effect(ManageEffect.Snackbar(SnackKind.FAILED, "", false))
         val kept = DockLayers.keep(dock)
         val r = writer.write(tvId, PlanRequest.ApplyTheme(look.doc, look.config, look.wallpaper)) { send(BusyNow(it)) }
@@ -478,11 +530,12 @@ class HomeScreenMachine(
             val keepSaved = Looks.dated(themeId) || (pictureId == LookPicture.NEW_ID && !keptNew)
             val chosen = if (keptNew) LookPicture.MINE_ID else pictureId
             d.homePrefs.save(tvId, saved.withTheme(themeId, kept, cards, picture = if (keepSaved) saved.picture else chosen,
-                dim = if (keepSaved) saved.dim else if (chosen == LookPicture.MINE_ID) dim else null, columns = override))
+                dim = if (keepSaved) saved.dim else if (chosen == LookPicture.MINE_ID) dim else null, columns = override, dockChosen = chosenDock))
             rememberPushedLook(d, tvId, look.digest)
             send(Drift(false))
             effect(ManageEffect.Snackbar(SnackKind.HOME_SAVED, "", false))
             load()
+            scope.launch { shot(r.finished.status) }
             return
         }
         load()
@@ -500,7 +553,8 @@ class HomeScreenMachine(
         val cards = Cards.current(d, tvId, choice)
         val tv = lookTv(state.value)
         val own = attempt { OwnPicture.ref(d, tvId) }.getOrNull()
-        val look = attempt { val (doc, w) = drafts.docOf(choice, dock, cards, own, tv); Look.encode(d.encoder, d.blobs, doc, w) }.getOrNull()
+        val carry = LookCarry.of(d, tvId)
+        val look = attempt { val (doc, w) = drafts.docOf(choice, dock, cards, own, tv); Look.encode(d.encoder, d.blobs, carry(doc), w) }.getOrNull()
             ?: return effect(ManageEffect.Snackbar(SnackKind.FAILED, "", false))
         val r = writer.write(tvId, PlanRequest.ApplyTheme(look.doc, look.config, look.wallpaper)) { send(BusyNow(it)) }
         send(BusyNow(null))
@@ -510,6 +564,7 @@ class HomeScreenMachine(
             send(Drift(false))
             effect(ManageEffect.Snackbar(SnackKind.HOME_SAVED, "", false))
             load()
+            scope.launch { shot(r.finished.status) }
             return
         }
         load()
@@ -517,8 +572,8 @@ class HomeScreenMachine(
         if (r !is WriteResult.GateCancelled && r !is WriteResult.NoTv && r !is WriteResult.Paused) effect(ManageEffect.Snackbar(SnackKind.FAILED, "", false))
     }
 
-    // look2 "Put it on the TV": the draft in the new form (style keys outright, fill_dock false,
-    // columns always), with the saved dock. `photo`: a photo made in the sheet; the earlier look's
+    // look2 "Put it on the TV": the draft in the new form (style keys outright, fill_dock false for
+    // a dock the person chose, columns always), with the saved dock. `photo`: a photo made in the sheet; the earlier look's
     // photo comes from earlier.jpg. On success the choice is saved and the look the TV had before
     // becomes the earlier look (EarlierLook); a photo is kept for the TV only once the TV has it.
     // On failure the draft and the photo stay (lookFailed, OpenLook), and no generic snackbar shows.
@@ -531,7 +586,8 @@ class HomeScreenMachine(
             else null
         val sendsPhoto = photo ?: earlierPhoto
         val ctx = lookContext(at).copy(cards = cards)
-        val look = attempt { val (doc, w) = drafts.docOf(draft, dock, cards, ctx); Look.encode(d.encoder, d.blobs, doc, w) }.getOrNull()
+        val carry = LookCarry.of(d, tvId)
+        val look = attempt { val (doc, w) = drafts.docOf(draft, dock, cards, ctx); Look.encode(d.encoder, d.blobs, carry(doc), w) }.getOrNull()
         if (look == null || (draft.newPhoto && sendsPhoto == null)) { send(LookResult(false)); return }
         val r = writer.write(tvId, PlanRequest.ApplyTheme(look.doc, look.config, look.wallpaper)) { send(BusyNow(it)) }
         send(BusyNow(null))
@@ -549,7 +605,7 @@ class HomeScreenMachine(
                 else -> at.ownDim
             }
             val kept = DockLayers.keep(dock)
-            val next = drafts.choiceOf(draft, before, kept, cards, picture, dim)
+            val next = drafts.choiceOf(draft, before, kept, cards, picture, dim, dockChosen = before?.dockChosen ?: true)
             attempt { EarlierLook.remember(d.documents, tvId, EarlierLook.firstLook(before, kept), next, keptNew, oldPhoto) }
             d.homePrefs.save(tvId, next)
             rememberPushedLook(d, tvId, look.digest)
@@ -559,12 +615,34 @@ class HomeScreenMachine(
             send(Drift(false))
             effect(ManageEffect.Snackbar(SnackKind.HOME_SAVED, "", false))
             load()
+            scope.launch { shot(r.finished.status) }
             return
         }
         load()
-        if (r is WriteResult.Paused) { this.kept = null; send(LookResult(true)); return }   // the open-run card (O2)
+        // UX finding 19: a paused send (the open-run card, O2) did not reach the TV either; the draft
+        // and the photo stay, so the look is not lost while the card is dealt with.
+        if (r is WriteResult.Paused) { send(LookResult(false)); return }
         if (r is WriteResult.Refused && state.value.notOnTv != null) { this.kept = null; send(LookResult(true)); return }
         send(LookResult(false))
+    }
+
+    // 0.4.8 (PLAN item 3): after a look reached the TV, the TV as it looks now, by the same screenshot Manage's card
+    // takes; a moment first, so the home screen has drawn the new look.
+    private suspend fun shot(status: RunStatus) {
+        if (status != RunStatus.COMPLETED && status != RunStatus.COMPLETED_WITH_SKIPS) return
+        delay(LOOK_SHOT_DELAY_MS)
+        val s = d.access.live(tvId) ?: return
+        send(LookShot(attempt { d.prober.screenshot(s) }.getOrNull()))
+    }
+
+    // RFC-HELPER-1: "Switch off" of the Home button helper: our HomeKeyService out of the list, every
+    // other service as it was (PLAN 4.4). Switching it on again is Setup's, with its consent.
+    private suspend fun helperOff() {
+        val r = writer.write(tvId, PlanRequest.HomeHelperOff) { send(BusyNow(it)) }
+        send(BusyNow(null))
+        if (r is WriteResult.Done) effect(ManageEffect.Snackbar(SnackKind.HOME_SAVED, "", false))
+        else if (r !is WriteResult.GateCancelled && r !is WriteResult.NoTv && r !is WriteResult.Paused) effect(ManageEffect.Snackbar(SnackKind.FAILED, "", false))
+        load()
     }
 
     // "Use the TV's own home screen": re-enables the stock launcher, sets it as home, keeps ours

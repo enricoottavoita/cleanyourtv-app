@@ -315,6 +315,27 @@ class TvReportTest {
         assertEquals("home switch not in the plan", HomeDecision.of(HomeBlock.NONE, planHasSwitch = false, alreadyOn = false).line)
     }
 
+    // 0.4.7-beta2: 141 reports since 0.4.6.1 said "App: [address] (full)": a four-part hotfix version
+    // looks like an address to the mask. The app's own version lines keep it; an address does not,
+    // nor do the same digits inside a log line of a connect report (the "Copy error" mask).
+    @Test fun theAppsOwnFourPartVersionIsKeptAndAddressesAreNot() {
+        val hotfix = AppAbout("0.4.6.1", "full", "Samsung SM-S921B", "Android 16")
+        val restarts = RestartFacts(HomePath.LIST, RestartTally(held = 1, build = "0.4.6.1 (full, release)"), "provider")
+        val home = HomeDecision(false, "UNKNOWN_HOME", app = "0.4.7.1-beta1", profile = "brand set Hisense")
+        val input = input().copy(about = hotfix, home = home, homeEarlier = true, restarts = restarts)
+        val log = "Clean Your TV 0.4.6.1, Android 36\n1792745323148 I setup: connect 0.4.6.1 refused by 192.168.1.23"
+        val text = TvReport.problem(hotfix, input, log, ReportContext("Setup", "card", "CONNECT_FAILED", connect = true, error = "refused 192.168.1.23"))
+        assertTrue(text.startsWith("Clean Your TV: problem report\nApp: 0.4.6.1 (full)\n"), text)
+        assertTrue("Counted by: 0.4.6.1 (full, release)\n" in text, text)
+        assertTrue("(from an earlier Setup: 0.4.7.1-beta1, brand set Hisense)" in text, text)
+        assertTrue("\nClean Your TV 0.4.6.1, Android 36\n1792745323148 I setup: connect [address] refused by [address]\n" in text, text)
+        assertTrue("Error: refused [address]" in text, text)
+        assertFalse("192.168" in text || "x.x.x" in text, text)
+        // The TV report's header and a beta's App line too; a value that is not a version is still masked.
+        assertTrue("App: 0.4.7.1-beta1 (full)\n" in TvReport.text(input().copy(about = hotfix.copy(version = "0.4.7.1-beta1"))))
+        assertTrue("App: fork at [address] (full)\n" in TvReport.text(input().copy(about = hotfix.copy(version = "fork at 192.168.1.23"))))
+    }
+
     private fun query(url: String): Map<String, String> = url.substringAfter('?').split('&').associate {
         it.substringBefore('=') to URLDecoder.decode(it.substringAfter('='), "UTF-8")
     }

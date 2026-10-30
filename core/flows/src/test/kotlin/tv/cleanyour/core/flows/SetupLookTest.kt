@@ -25,6 +25,7 @@ import tv.cleanyour.testing.fixtures.sha256Of
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -156,10 +157,47 @@ class SetupLookTest {
         assertEquals(listOf<Any?>(inSetup.style, inSetup.picture, inSetup.columns, inSetup.movement, inSetup.lift, inSetup.details, inSetup.fullFile),
             listOf(draft.style, draft.picture, draft.columns, draft.movement, draft.lift, draft.details, draft.fullFile), "the same choice as Setup's look step")
         assertEquals(WayBack.EARLIER, draft.wayBack, "Setup's Default look is the earlier look")
+        // 0.4.8 (beta1 QA): the TV has this choice, so the sheet offers no "Put it on the TV" and a send does nothing.
+        assertFalse(draft.canSend, "nothing changed since Setup sent it")
+        val pushes = h.planner.requests.filterIsInstance<PlanRequest.ApplyTheme>().size
         home.dispatch(HomeScreenIntent.UseLook); settle()
-        val push = h.planner.requests.filterIsInstance<PlanRequest.ApplyTheme>().last()
-        assertContentEquals(setupBytes, h.blobs.bytes(push.config), "the same config.json")
-        assertEquals(setup.wallpaper, push.wallpaper, "the same wallpaper.jpg")
+        assertEquals(pushes, h.planner.requests.filterIsInstance<PlanRequest.ApplyTheme>().size, "an unchanged draft is not sent")
+        assertNotNull(home.state.value.look, "the sheet stays open")
+    }
+
+    // 0.4.7: every push names the TV's Live TV app (Samples' com.android.tv), Setup's and each of
+    // Manage's after it, since the look's doc is built from scratch each time (LookKeys.build); and
+    // fill_dock follows who made the dock on every push: true for the dock Setup picked, false from
+    // the moment the person sets one in the Dock sheet, kept in home.txt for the pushes after it.
+    @Test fun everyPushAfterSetupNamesTheLiveTvAppAndFillsOnlyAPickedDock() = runTest(timeout = 30.seconds) {
+        val live = "com.android.tv"
+        val h = Harness()
+        val m = found(h)
+        assertEquals(listOf<Any?>(live, true), h.sentDoc().let { listOf(it.liveTvPackage, it.fillDock) }, "Setup, the picked dock")
+        makeItClean(h, m)
+        val tv = h.tvs.tvs.value.single()
+        assertEquals(false, HomePrefs(h.documents).load(tv.id)?.dockChosen)
+        assertTrue("\ndockchosen=false\n" in assertNotNull(h.documents.read("tvs/${tv.id.value}/home.txt") { it.decodeToString() }))
+        val home = HomeScreenMachine(h.manageDeps(encoder = ConfigEncoder.Codec, themes = looks), backgroundScope, tv.id)
+        settle()
+        fun pushed(): LauncherConfigDoc = assertIs<DecodeResult.Ok>(LauncherConfigCodec.decode(
+            h.blobs.bytes(h.planner.requests.filterIsInstance<PlanRequest.ApplyTheme>().last().config))).doc
+        fun check(fill: Boolean, what: String) = assertEquals(listOf<Any?>(live, fill), pushed().let { listOf(it.liveTvPackage, it.fillDock) }, what)
+        home.dispatch(HomeScreenIntent.OpenLook); settle()
+        home.dispatch(HomeScreenIntent.Look(LookEdit.SelectStyle(StyleId.GLASS))); settle()
+        home.dispatch(HomeScreenIntent.UseLook); settle()
+        check(true, "a look change after Setup")
+        home.dispatch(HomeScreenIntent.RestoreMine); settle()
+        check(true, "Restore mine")
+        home.dispatch(HomeScreenIntent.SetDock(apps.take(2))); settle()
+        check(false, "a dock the person set")
+        assertEquals(true, HomePrefs(h.documents).load(tv.id)?.dockChosen)
+        home.dispatch(HomeScreenIntent.OpenLook); settle()
+        home.dispatch(HomeScreenIntent.Look(LookEdit.SelectStyle(StyleId.CLASSIC))); settle()
+        home.dispatch(HomeScreenIntent.UseLook); settle()
+        check(false, "a look change after the person's dock")
+        home.dispatch(HomeScreenIntent.RestoreMine); settle()
+        check(false, "Restore mine after the person's dock")
     }
 
     // A photo made in the look step is sent with its dim when Setup runs, and kept for the TV (as

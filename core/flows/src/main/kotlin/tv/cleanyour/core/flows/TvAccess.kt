@@ -10,6 +10,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import tv.cleanyour.core.discovery.Discovery
 import tv.cleanyour.core.discovery.DiscoveryEvent
 import tv.cleanyour.core.model.AdbError
@@ -32,7 +33,35 @@ sealed interface Reach {
     data class Connecting(val tvId: TvId, val tvName: String) : Reach
     data class NeedsDebugging(val tvId: TvId, val tvName: String) : Reach      // M1a: port 5555 closed
     data class AwaitingAllow(val tvId: TvId, val tvName: String, val fingerprint: String) : Reach   // after "Reset my key"
-    data class WrongNetwork(val tvId: TvId, val tvName: String) : Reach        // D19: by subnet, never by name
+    data class WrongNetwork(val tvId: TvId, val tvName: String) : Reach        // the phone is not on Wi-Fi (RFC-REACH-1)
+}
+
+// RFC-REACH-1: one answer of "What the app sees" under the debugging step. CHECKING until the first
+// look; UNKNOWN when there is nothing to look at (no Wi-Fi, or no subnet saved for this TV).
+enum class Seen { YES, NO, CHECKING, UNKNOWN }
+
+// RFC-REACH-1: what the app sees while the debugging step waits, so the person (and a report) can
+// tell which case it is. Updated each poll round; immutable, never holds an address or a subnet.
+data class ReachCheck(
+    val onWifi: Seen = Seen.CHECKING,
+    val sameNetwork: Seen = Seen.CHECKING,      // as when the TV was set up; NO is a hint, never a gate
+    val savedAnswers: Seen = Seen.CHECKING,     // port 5555 at a saved address
+    val foundElsewhere: Seen = Seen.CHECKING,   // the network search of RFC-RECONNECT-1
+    val asksToAllow: Seen = Seen.NO,            // the TV shows "Allow USB debugging?"
+    val switchedOff: Boolean = false,           // the app switched debugging off when it was done, as planned
+    val waitedMs: Long = 0,
+) {
+    // About 30 s with the saved address closed and nothing found: the sheet adds the restart hint.
+    val stuck: Boolean get() = waitedMs >= STUCK_MS && savedAnswers == Seen.NO && foundElsewhere == Seen.NO
+
+    // Fixed words for a report's card line; never an address.
+    fun summary(): String = "wifi ${w(onWifi)}, same network ${w(sameNetwork)}, 5555 ${w(savedAnswers)}, " +
+        "found elsewhere ${w(foundElsewhere)}, allow asked ${w(asksToAllow)}, waited ${waitedMs / 1000} s"
+
+    companion object {
+        const val STUCK_MS = 30_000L
+        private fun w(s: Seen) = s.name.lowercase()
+    }
 }
 
 sealed interface AccessResult {
@@ -54,6 +83,13 @@ sealed interface AccessResult {
 // sees no Allow dialog, and one that takes the key must have this TvId (a different TV is never connected). The TV
 // found is saved at its new address. A search lasts `searchMs` and runs again every `searchEveryMs` while the
 // debugging step waits.
+//
+// RFC-REACH-1 (a user stuck at "Waiting for the TV..." after the network changed): D19 detects a different network by
+// link subnet, and the subnet used to be a gate: on a new router, a reset router or a guest network the saved
+// address was never probed and the network never searched, so the step waited for good. The subnet is now a hint
+// shown to the person ("What the app sees"), not a gate: on any Wi-Fi the saved addresses are probed and the network
+// is searched, and the TvId check (D37) keeps a different TV from ever getting a line. Only a phone that is not on
+// Wi-Fi is WrongNetwork. Each change of state is one log line, for "Report a problem".
 @OptIn(ExperimentalCoroutinesApi::class)   // CompletableDeferred.getCompleted, after isCompleted
 class TvAccess(
     private val sessions: SessionManager,
@@ -62,12 +98,22 @@ class TvAccess(
     private val clock: Clock,
     private val pollMs: Long = 2_000,
     private val giveUpMs: Long = 10 * 60_000,
-    private val searchMs: Long = 8_000,
+    private val searchMs: Long = 15_000,
     private val searchEveryMs: Long = 30_000,
     private val log: FlowLog = FlowLog { },
 ) {
     private val mutableReach = MutableStateFlow<Reach>(Reach.Idle)
     val reach: StateFlow<Reach> = mutableReach.asStateFlow()
+    private val mutableCheck = MutableStateFlow(ReachCheck())
+    val check: StateFlow<ReachCheck> = mutableCheck.asStateFlow()   // RFC-REACH-1
+    // RFC-REACH-1: the last search's counts (other addresses tried, those that answered but were not this TV) and the
+    // last state logged, so a log line is written on a change only, never on every poll.
+    private val searchCounts = MutableStateFlow<Pair<Int, Int>?>(null)
+    private val logged = MutableStateFlow<String?>(null)
+    // The last handshake error of each TV, as LogCodes names it (R8 renames classes), for "Copy connection details".
+    private val handshakes = java.util.concurrent.ConcurrentHashMap<TvId, String>()
+
+    fun lastHandshake(tvId: TvId): String? = handshakes[tvId]
     private val cancelGen = MutableStateFlow(0L)
 
     fun cancelWaiting() { cancelGen.value = cancelGen.value + 1 }
@@ -97,7 +143,9 @@ class TvAccess(
         val tv = tvs.tvs.value.firstOrNull { it.id == tvId } ?: return AccessResult.Unknown
         val gen = cancelGen.value
         val hosts = tv.endpoints.filterIsInstance<Endpoint.PlainTcp>()
-        fun rightNetwork(net: DiscoveryEvent.NetworkState) = net.onWifi && (tv.lastSubnet == null || net.subnet == null || net.subnet == tv.lastSubnet)
+        mutableCheck.value = ReachCheck(switchedOff = tv.debugging == DebugState.OFF)
+        searchCounts.value = null
+        logged.value = null
         try {
             return coroutineScope {
                 // RFC-RECONNECT-1: after one round at the saved addresses, the network is searched beside the polling,
@@ -106,7 +154,12 @@ class TvAccess(
                 val searcher = launch {
                     delay(pollMs)
                     while (true) {
-                        if (rightNetwork(discovery.network().value)) moved(tv, hosts.map { it.host }.toSet())?.let { moved.complete(it); return@launch }
+                        // RFC-REACH-1: on any Wi-Fi, also one that is not the network of the setup. Off Wi-Fi it looks
+                        // again soon, so a phone back on Wi-Fi does not wait a whole search interval.
+                        if (!discovery.network().value.onWifi) { delay(pollMs); continue }
+                        val hit = moved(tv, hosts.map { it.host }.toSet())
+                        if (hit != null) { mutableCheck.update { it.copy(foundElsewhere = Seen.YES) }; moved.complete(hit); return@launch }
+                        mutableCheck.update { it.copy(foundElsewhere = Seen.NO) }
                         delay(searchEveryMs)
                     }
                 }
@@ -114,6 +167,7 @@ class TvAccess(
             }
         } finally {
             mutableReach.value = Reach.Idle
+            mutableCheck.value = ReachCheck()
         }
     }
 
@@ -132,24 +186,56 @@ class TvAccess(
                 log.line("access: the TV answered at a new address and was saved there")
                 return AccessResult.Ok(session)
             }
-            if (!net.onWifi || (tv.lastSubnet != null && net.subnet != null && net.subnet != tv.lastSubnet)) {
+            // RFC-REACH-1: the subnet is a hint for the person, never a gate; the TvId check keeps it safe (D37).
+            val same = when {
+                !net.onWifi || tv.lastSubnet == null || net.subnet == null -> Seen.UNKNOWN
+                net.subnet == tv.lastSubnet -> Seen.YES
+                else -> Seen.NO
+            }
+            if (!net.onWifi) {
                 mutableReach.value = Reach.WrongNetwork(tvId, tv.nickname)
+                mutableCheck.update { it.copy(onWifi = Seen.NO, sameNetwork = same, savedAnswers = Seen.UNKNOWN, foundElsewhere = Seen.UNKNOWN,
+                    asksToAllow = Seen.NO, waitedMs = waited) }
+                logState(net, same, hosts.size, null, null)
             } else {
                 val open = hosts.firstOrNull { discovery.probe5555(it.host) }
+                mutableCheck.update { it.copy(onWifi = Seen.YES, sameNetwork = same, savedAnswers = if (open != null) Seen.YES else Seen.NO,
+                    foundElsewhere = if (it.foundElsewhere == Seen.UNKNOWN) Seen.CHECKING else it.foundElsewhere, waitedMs = waited) }
+                var handshake: AdbError? = null
                 if (open != null) {
                     mutableReach.value = Reach.Connecting(tvId, tv.nickname)
-                    when (val r = sessions.open(open, tvId) { fp -> mutableReach.value = Reach.AwaitingAllow(tvId, tv.nickname, fp) }) {
+                    // RFC-REACH-1: on a network other than the setup's, the saved address may be someone else's TV now
+                    // (an office or a friend's Wi-Fi), so only the known-TV handshake: no Allow dialog on a stranger's
+                    // TV, and a refusal there is no reason to stop looking.
+                    val elsewhere = same == Seen.NO
+                    val r = if (elsewhere) attempt { sessions.openKnown(open, tvId) }.getOrElse { OpenResult.Failed(AdbError.Transport.Unreachable) }
+                    else sessions.open(open, tvId) { fp ->
+                        mutableReach.value = Reach.AwaitingAllow(tvId, tv.nickname, fp)
+                        mutableCheck.update { it.copy(asksToAllow = Seen.YES) }
+                        logState(net, same, hosts.size, true, null)
+                    }
+                    mutableCheck.update { it.copy(asksToAllow = Seen.NO) }
+                    when (r) {
                         is OpenResult.Ok -> {
                             tvs.upsert(current(tvId, tv).copy(lastSeenAt = clock.nowMs(), debugging = DebugState.ON, lastSubnet = net.subnet ?: tv.lastSubnet))
+                            log.line("access: connected at a saved address${if (same == Seen.NO) ", on a network other than the setup's (saved as the TV's network now)" else ""}")
                             return AccessResult.Ok(r.session)
                         }
-                        is OpenResult.Failed -> when (r.error) {
-                            is AdbError.Policy.WrongTv, AdbError.Transport.NoShellV2, AdbError.Auth.Denied -> return AccessResult.Failed(r.error)
-                            else -> {}
+                        is OpenResult.Failed -> {
+                            handshake = r.error
+                            handshakes[tvId] = LogCodes.of(r.error)
+                            when (r.error) {
+                                is AdbError.Policy.WrongTv, AdbError.Transport.NoShellV2, AdbError.Auth.Denied -> if (!elsewhere) {
+                                    logState(net, same, hosts.size, true, r.error, final = true)
+                                    return AccessResult.Failed(r.error)
+                                }
+                                else -> {}
+                            }
                         }
                     }
                 }
                 mutableReach.value = Reach.NeedsDebugging(tvId, tv.nickname)
+                logState(net, same, hosts.size, open != null, handshake)
             }
             if (waited >= giveUpMs) return AccessResult.Cancelled
             withTimeoutOrNull(pollMs) { moved.await() }   // a poll interval, cut short when the search finds the TV
@@ -177,9 +263,54 @@ class TvAccess(
                 }
             }
         }
-        if (hit == null) log.line("access: looked for the TV on the network: ${tried.size} other addresses, $others answered but were not this TV or had not allowed this phone")
+        if (hit == null) {
+            searchCounts.value = tried.size to others
+            log.line("access: looked for the TV on the network: ${tried.size} other addresses, $others answered but were not this TV or had not allowed this phone")
+        }
         return hit
     }
 
-    private fun current(tvId: TvId, fallback: Tv): Tv = tvs.tvs.value.firstOrNull { it.id == tvId } ?: fallback
+    // 0.4.8 (PLAN item 4): Manage's own reconnect, after the TV restarted or the app came back, so "Offline" no longer
+    // waits for a tap on Reconnect. Only the saved addresses whose port 5555 answers, and only the known-TV handshake
+    // (openKnown, RFC-RECONNECT-1): the app's key signs and nothing more, so a TV that no longer takes it shows no Allow
+    // dialog, a different TV is never connected, and neither the debugging step nor any other sheet shows on the phone.
+    // Null when the TV did not answer that way; Reconnect stays the person's way in then.
+    suspend fun quiet(tvId: TvId): TvSession? {
+        live(tvId)?.let { return it }
+        val tv = tvs.tvs.value.firstOrNull { it.id == tvId } ?: return null
+        val net = discovery.network().value
+        // RFC-REACH-1: any Wi-Fi; a network other than the setup's is no reason not to try (openKnown checks the TvId).
+        if (!net.onWifi) return null
+        for (endpoint in tv.endpoints.filterIsInstance<Endpoint.PlainTcp>()) {
+            if (!attempt { discovery.probe5555(endpoint.host) }.getOrDefault(false)) continue
+            val r = attempt { sessions.openKnown(endpoint, tvId) }.getOrNull()
+            if (r is OpenResult.Ok) {
+                tvs.upsert(current(tvId, tv).copy(lastSeenAt = clock.nowMs(), debugging = DebugState.ON, lastSubnet = net.subnet ?: tv.lastSubnet))
+                return r.session
+            }
+        }
+        return null
+    }
+
+    private fun current(tvId: TvId, fallback: Tv): Tv =tvs.tvs.value.firstOrNull { it.id == tvId } ?: fallback
+
+    // RFC-REACH-1: one line when what the debugging step waits on changes, never per poll. Fixed words and counts only:
+    // never an address or a subnet (the redactor masks them as well, but nothing here relies on it).
+    private fun logState(net: DiscoveryEvent.NetworkState, same: Seen, saved: Int, answered: Boolean?, handshake: AdbError?, final: Boolean = false) {
+        val state = when (mutableReach.value) {
+            is Reach.WrongNetwork -> "not on Wi-Fi"
+            is Reach.AwaitingAllow -> "waiting for Allow on the TV"
+            is Reach.Connecting -> if (final) "refused" else "connecting"
+            is Reach.NeedsDebugging -> "needs debugging"
+            Reach.Idle -> "idle"
+        }
+        val network = when (same) { Seen.YES -> "same as setup"; Seen.NO -> "different from setup"; else -> "unknown" }
+        val port = when (answered) { true -> "answered"; false -> "closed"; null -> "not tried" }
+        val search = searchCounts.value?.let { (tried, others) -> "$tried other addresses, $others answered but were not this TV" } ?: "none yet"
+        val line = "access: $state; wifi ${if (net.onWifi) "yes" else "no"}; network $network; " +
+            "$saved saved address${if (saved == 1) "" else "es"}; 5555 $port; search $search; handshake ${handshake?.let { LogCodes.of(it) } ?: "none"}"
+        if (logged.value == line) return
+        logged.value = line
+        log.line(line)
+    }
 }

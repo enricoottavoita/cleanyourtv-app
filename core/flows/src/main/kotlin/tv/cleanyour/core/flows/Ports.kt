@@ -45,9 +45,10 @@ enum class CopyKey(val res: String) {
     STOP_TV_NOT_SUPPORTED_TITLE("stop_tv_not_supported_title"), STOP_TV_NOT_SUPPORTED_BODY("stop_tv_not_supported_body"),
     STOP_TV_NOT_SUPPORTED_PRIMARY("stop_tv_not_supported_primary"),
 
-    STOP_HOME_SETUPWRAITH_TITLE("stop_home_setupwraith_title"), STOP_HOME_SETUPWRAITH_BODY("stop_home_setupwraith_body"),
-    STOP_HOME_SETUPWRAITH_PRIMARY("stop_home_setupwraith_primary"), STOP_HOME_SETUPWRAITH_SECONDARY("stop_home_setupwraith_secondary"),
-    STOP_HOME_SETUPWRAITH_WIFI_BODY("stop_home_setupwraith_wifi_body"), STOP_HOME_SETUPWRAITH_WIFI_PRIMARY("stop_home_setupwraith_wifi_primary"),   // D3
+    // 0.4.7 (UX findings 16 and 23): the wizard card is the Wi-Fi card only; "Keep the TV's own home
+    // screen" is its primary, "I've done that, try again" its second button when the wizard owns the Wi-Fi.
+    STOP_HOME_SETUPWRAITH_TITLE("stop_home_setupwraith_title"), STOP_HOME_SETUPWRAITH_SECONDARY("stop_home_setupwraith_secondary"),
+    STOP_HOME_SETUPWRAITH_WIFI_BODY("stop_home_setupwraith_wifi_body"), STOP_HOME_SETUPWRAITH_WIFI_SECONDARY("stop_home_setupwraith_wifi_secondary"),   // D3
     STOP_HOME_SETUPWRAITH_WIFI_UNKNOWN_BODY("stop_home_setupwraith_wifi_unknown_body"),   // RF-LAUNCHER-240 F6
     STOP_HOME_OTHER_LAUNCHER_TITLE("stop_home_other_launcher_title"), STOP_HOME_OTHER_LAUNCHER_BODY("stop_home_other_launcher_body"),   // {launcher}
     STOP_HOME_OTHER_LAUNCHER_PRIMARY("stop_home_other_launcher_primary"), STOP_HOME_OTHER_LAUNCHER_SECONDARY("stop_home_other_launcher_secondary"),   // {launcher}

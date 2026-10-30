@@ -37,6 +37,9 @@ internal data class LookContext(
     // The dock a send pushes (the saved one, which can still hold an app the TV no longer shows),
     // null for the dock as shown. The bytes, so the preview, the settings file and Copy, come from it.
     val pushDock: List<PackageName>? = null,
+    // 0.4.7: the dock is the person's own or from before 0.4.7 (HomeChoice.dockChosen), so the bytes
+    // keep fill_dock false; false, a dock the app picked, lets the TV fill free spaces (Look.docOf).
+    val dockChosen: Boolean = true,
 ) {
     val dock: List<PackageName> get() = pushDock ?: apps.map { it.pkg }
 }
@@ -244,7 +247,7 @@ internal class LookDrafts(
     fun docOf(draft: LookDraft, dock: List<PackageName>, cards: Boolean, ctx: LookContext): Pair<LauncherConfigDoc, BlobRef?> {
         val p = partsOf(draft)
         val pic = pictureOf(p.picture, ctx)
-        return Look.docOf(p.copy(picture = pic.id), pic, dock, cards, ctx.tv)
+        return Look.docOf(p.copy(picture = pic.id), pic, dock, cards, ctx.tv, fillDock = !ctx.dockChosen)
     }
 
     // A style change (the prototype's chooseStyle): the new style's own details; the note names the
@@ -323,11 +326,11 @@ internal class LookDrafts(
         val styles = LookGates.styles(tv.versionCode)
         val rows = LookRules.rows(p, pic, ctx.dock.size, tv)
         val dock = ctx.dock
-        val (doc, wallpaper) = Look.docOf(p, pic, dock, ctx.cards, tv)
+        val (doc, wallpaper) = Look.docOf(p, pic, dock, ctx.cards, tv, fillDock = !ctx.dockChosen)
         val bytes = encoder.encode(doc)
         val cards = StyleId.entries.map { s ->
             val card = p.copy(style = s, details = LookRules.withoutStyleDetails(p.details))
-            val (cd, cw) = Look.docOf(card, pic, dock, ctx.cards, tv)
+            val (cd, cw) = Look.docOf(card, pic, dock, ctx.cards, tv, fillDock = !ctx.dockChosen)
             StyleCard(s, previewOf(runCatching { encoder.encode(cd) }.getOrNull(), cw, ctx), s in styles)
         }
         val b = base
@@ -355,6 +358,7 @@ internal class LookDrafts(
             extras = if (LookGates.reads30(tv.versionCode)) p.extras else LookExtras.DEFAULT,
             actingExtras = LookRules.extras(p, rows, tv),
             offeredExtras = LookRules.extras(p.copy(extras = ALL_ON), rows, tv),
+            unsent = ctx.sent == null,
         )
     }
 
@@ -371,10 +375,11 @@ internal class LookDrafts(
     // The choice a send saves, in the new form, with `columns` always: `picture` is what the TV
     // shows after it (a photo made in the sheet or the earlier photo is "mine" once kept), `dim`
     // its photo's dim. A dated picture keeps the picture before it (previousPicture).
-    fun choiceOf(draft: LookDraft, saved: HomeChoice?, dock: List<PackageName>, cards: Boolean?, picture: String, dim: Int?): HomeChoice =
+    fun choiceOf(draft: LookDraft, saved: HomeChoice?, dock: List<PackageName>, cards: Boolean?, picture: String, dim: Int?,
+        dockChosen: Boolean = true): HomeChoice =
         HomeChoice(dock, themeId = null, cards = cards, picture = picture, dim = dim, columns = draft.columns,
             style = draft.style.id, movement = draft.movement.id, lift = draft.lift, names = draft.names, details = draft.details,
-            previousPicture = previousPicture(saved, picture), extras = draft.extras)
+            previousPicture = previousPicture(saved, picture), extras = draft.extras, dockChosen = dockChosen)
 
     private fun previousPicture(saved: HomeChoice?, next: String): String? {
         if (!datedPicture(next)) return null
@@ -394,12 +399,12 @@ internal class LookDrafts(
         if (!choice.isNew) {
             val theme = theme(choice.lookOn(clock.today()))
             val picture = if (choice.picture == LookPicture.MINE_ID) mine?.let { OwnPicture.mine(it, choice.dim) } else LookPicture.of(choice.picture, pictures)
-            return Look.docOf(theme, dock, cards, picture, override(theme?.id, choice.columns))
+            return Look.docOf(theme, dock, cards, picture, override(theme?.id, choice.columns), fillDock = !choice.dockChosen)
         }
         val ctx = LookContext(mine = mine?.let { OwnPicture.mine(it, choice.dim) }, tv = tv)
         val p = partsOf(choice, tv)
         val pic = pictureOf(p.picture, ctx)
-        return Look.docOf(p.copy(picture = pic.id), pic, dock, cards, tv)
+        return Look.docOf(p.copy(picture = pic.id), pic, dock, cards, tv, fillDock = !choice.dockChosen)
     }
 
     // A saved choice's preview (the Home page's Look row) from the bytes it sends.

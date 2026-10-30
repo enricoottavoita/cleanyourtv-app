@@ -79,6 +79,37 @@ class UndoSafetyTest {
         }
     }
 
+    // RFC-HELPER-1 (test build): Undo everything after the Home button helper. Whatever the TV has
+    // now, the undo never adds the helper and never writes accessibility_enabled 1 or a list back; it
+    // takes out exactly our entry, every other entry byte for byte and in order, and switches
+    // accessibility off only when this app switched it on and nothing else is left.
+    @Test fun undoTakesOutOnlyTheHelperAndNeverSwitchesItOn() {
+        val service = HomeHelper.SERVICE.flat
+        val reader = "com.example.reader/.Reader"
+        val added = listOf(
+            change(0, Op.AccessibilityAdd(null, HomeHelper.SERVICE), Prior(settingValue = null)),
+            change(1, Op.SettingsPut(SettingKey.ACCESSIBILITY_ENABLED, "1"), Prior(settingValue = "0")),
+        )
+        fun tv(enabled: String?, list: String?) = snapshot().withSettings(snapshot().settings + mapOf(SettingKey.ACCESSIBILITY_ENABLED to enabled, SettingKey.ENABLED_ACCESSIBILITY to list))
+        val p = PlannerFixtures.planner()   // a release planner: Undo of a test build's records works in any build
+        for (enabled in listOf("1", "0", null)) for (list in listOf(service, "$reader:$service", "$service:$reader", reader, null)) {
+            val ops = undo(tv(enabled, list), added, p).steps.map { it.op }
+            val label = "accessibility $enabled, list $list: $ops"
+            assertTrue(ops.none { it is Op.AccessibilityAdd || it == Op.SettingsPut(SettingKey.ACCESSIBILITY_ENABLED, "1") }, label)
+            assertTrue(ops.none { it is Op.SettingsPut && it.key == SettingKey.ENABLED_ACCESSIBILITY && it.value != null }, label)
+            val remove = ops.filterIsInstance<Op.AccessibilityRemove>()
+            if (list?.contains(service) == true) assertEquals(listOf(Op.AccessibilityRemove(list, HomeHelper.SERVICE)), remove, label)
+            else assertTrue(remove.isEmpty(), label)
+            val others = list?.split(':')?.filter { it != service }.orEmpty()
+            val off = Op.SettingsPut(SettingKey.ACCESSIBILITY_ENABLED, "0") in ops
+            if (off) assertTrue(others.isEmpty() && enabled != "0", label)
+            if (enabled == "1" && others.isEmpty()) assertTrue(off, "accessibility goes back off with nothing left: $label")
+        }
+        // A removal of ours (Manage's Switch off) is never undone.
+        val switchedOff = added + change(5, Op.AccessibilityRemove(service, HomeHelper.SERVICE), Prior(settingValue = service))
+        assertTrue(undo(tv("1", reader), switchedOff, p).steps.none { it.op is Op.AccessibilityAdd })
+    }
+
     // (3) A journal from before 0.4.5 on a chooser TV holds the chooser as the SetHome prior. Undo
     // everything and Before a factory reset hand HOME to the stock home the switch armed its
     // watchdog with (or the profile's stock launcher), never to the chooser.

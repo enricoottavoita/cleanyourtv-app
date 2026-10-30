@@ -16,20 +16,22 @@ import tv.cleanyour.core.model.SettingKey
 //    because its prior is the state before this app ever changed it. Later records of the same
 //    item are skipped, so a stale or partial history can never leave an item halfway.
 // 2. Items are undone phase by phase: package states first (so the TV's own home screen is
-//    switched back on), then settings, then the home screen itself, then the apps we installed
+//    switched back on), then the Home button helper (RFC-HELPER-1: our entry leaves the
+//    accessibility list before any setting, the look or the launcher goes), then settings, then the home screen itself, then the apps we installed
 //    (so our launcher is never removed while it is still the home screen), then our files.
 //    Inside a phase the item first touched most recently goes first.
 object UndoOrder {
     // Chronological by atMs, then plan step; the sort is stable, so list order breaks the rest.
     val CHRONOLOGICAL: Comparator<ChangeRecord> = compareBy({ it.atMs }, { it.step })
 
-    enum class Phase { PACKAGES, SETTINGS, HOME, APPS, FILES }
+    enum class Phase { PACKAGES, HELPER, SETTINGS, HOME, APPS, FILES }
 
     // What a change record changed. Ops that leave nothing lasting on the TV have no target.
     sealed interface Target {
         val phase: Phase
         data class PackageEnabled(val pkg: PackageName) : Target { override val phase get() = Phase.PACKAGES }
         data class Setting(val key: SettingKey) : Target { override val phase get() = Phase.SETTINGS }
+        data class Helper(val pkg: PackageName) : Target { override val phase get() = Phase.HELPER }   // RFC-HELPER-1
         data object Home : Target { override val phase get() = Phase.HOME }
         data class App(val pkg: PackageName) : Target { override val phase get() = Phase.APPS }
         data class File(val path: RemotePath) : Target { override val phase get() = Phase.FILES }
@@ -46,6 +48,9 @@ object UndoOrder {
         is Op.Uninstall -> Target.App(op.pkg)
         is Op.PushAsset -> Target.File(op.dest)
         is Op.RemoveFile -> Target.File(op.path)
+        is Op.AccessibilityAdd -> Target.Helper(op.component.pkg)
+        is Op.AccessibilityRemove -> Target.Helper(op.component.pkg)
+        is Op.ArmHelperWatchdog,
         is Op.VerifyHome, is Op.ArmHomeWatchdog, is Op.ConfirmHome, is Op.KillWatchdog, Op.PressHome, is Op.Mkdir,
         is Op.RestartHome, is Op.StartActivity, is Op.Read, is Op.Settle, Op.Reboot, Op.DebugOff, is Op.CurtainCue -> null
     }

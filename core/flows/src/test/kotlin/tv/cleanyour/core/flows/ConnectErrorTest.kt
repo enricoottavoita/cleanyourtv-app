@@ -43,6 +43,24 @@ class ConnectErrorTest {
         for (kept in listOf("xiaomi-mitv-axso0", "com.google.android.apps.tv.launcherx/.home.HomeActivity", "UKG3.250107.001", "app 0.3.6")) assertTrue(kept in s, "$kept in $s")
     }
 
+    // 0.4.7-beta2: "Copy error" said "App: [address] (full)" from 0.4.6.1 on. The App line keeps the
+    // running app's four-part version; an address on the same lines, and the same digits inside a log
+    // line, are masked as before.
+    @Test fun theAppsFourPartVersionIsKeptAndAddressesAreNot() {
+        val hotfix = AppAbout("0.4.6.1", "full", "Pixel 8", "Android 15")
+        val log = "Clean Your TV 0.4.6.1, Android 35\n1 I setup: connect 0.4.6.1 refused by 192.168.1.23\n2 I setup: App: 0.4.6.1"
+        val s = ConnectErrorSummary.build(hotfix, "refused", "ConnectException, 192.168.1.23", log)
+        val lines = s.lines()
+        assertEquals("App: 0.4.6.1 (full)", lines[1])
+        assertEquals("Error: refused (ConnectException, [address])", lines[3])
+        assertEquals(listOf("1 I setup: connect [address] refused by [address]", "2 I setup: App: [address]"), lines.drop(5))
+        assertEquals("App: 0.4.7.1-beta1 (full)", ConnectErrorSummary.build(hotfix.copy(version = "0.4.7.1-beta1"), "refused", null, "").lines()[1])
+        // Only the running app's version is kept: another dotted quad on the same line still goes.
+        assertEquals("Clean Your TV [address], Android 35", ConnectErrorSummary.redact("Clean Your TV 10.0.0.5, Android 35", "0.4.6.1"))
+        assertEquals("Clean Your TV 0.4.6.1, at [address]", ConnectErrorSummary.redact("Clean Your TV 0.4.6.1, at 192.168.1.23", "0.4.6.1"))
+        assertEquals("[address]", ConnectErrorSummary.redact("0.4.6.1"))
+    }
+
     // Issues #325 and #620: the session let an exception of the phone's own out of open(), and the
     // door said "unreachable" with no reason. The machine names it now; the session types its own
     // (Issue325HandshakeTest in :adb:session), so this is the last defence.

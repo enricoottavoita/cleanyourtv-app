@@ -180,10 +180,13 @@ class AppGraph(context: Context, val appVersion: String = versionOf(context), va
     val homePrefs = HomePrefs(documents)
     val appPrefs = AppPrefs(documents)
     val openWrites = OpenWrites()                          // one per graph (R5-W8 O2), held by the one ManageDeps
-    val diagnostics = LogDiagnostics { "Clean Your TV $appVersion, Android ${android.os.Build.VERSION.SDK_INT}" }
+    val diagnostics = LogDiagnostics(appVersion) { "Clean Your TV $appVersion, Android ${android.os.Build.VERSION.SDK_INT}" }
     // 0.3.2 B1, B2: what a report says about the app and the phone (no id of the phone: its maker,
     // model and Android version, as a person would type them into the issue form).
-    val about = AppAbout(appVersion, store.flavour, phoneName(), "Android ${android.os.Build.VERSION.RELEASE}")
+    // 0.4.8: `testBuild`, any test switch in this build (candidate lists, R0 for any brand, the Home button helper),
+    // for the confirmation's "Build kind" line.
+    val about = AppAbout(appVersion, store.flavour, phoneName(), "Android ${android.os.Build.VERSION.RELEASE}", testBuild = testBuild())
+    val restarts = tv.cleanyour.core.flows.Restarts(documents)   // 0.4.8: one count for Setup and Manage
     val homeDecisions = HomeDecisions(documents)
     val screenLock = ScreenLock { credentialGate.hasScreenLock() }
 
@@ -206,6 +209,7 @@ class AppGraph(context: Context, val appVersion: String = versionOf(context), va
         about = about, connectDetail = { sessions.lastConnectFailure },   // 0.3.6: "Copy error"
         documents = documents,     // 0.4.0: the person's photo for the look step (OwnPicture)
         wrongFocus = { tvId -> wrongFocus.remove(tvId) },                 // issue #629
+        restarts = restarts,       // 0.4.8
     )
 
     val manageDeps = ManageDeps(
@@ -220,6 +224,9 @@ class AppGraph(context: Context, val appVersion: String = versionOf(context), va
         store = store.rules,       // STORES-PLAN 1
         about = about, homeDecisions = homeDecisions,   // 0.3.2 B1, B2
         redact = Redactor::redact,                      // 0.4.6: what a card puts into a problem report
+        log = FlowLog { CytLog.i(it) },                 // 0.4.7: Manage's re-check lines (StockHomeBack)
+        restarts = restarts,                            // 0.4.8: the restart count (Restarts)
+        phoneNetwork = AndroidPhoneNetwork(app),        // RFC-REACH-1: "Copy connection details"
     )
 
     init {
@@ -235,7 +242,7 @@ class AppGraph(context: Context, val appVersion: String = versionOf(context), va
     fun manage(scope: CoroutineScope, tvId: TvId?) = ManageMachine(manageDeps, scope, tvId)
     fun switchedOff(scope: CoroutineScope, tvId: TvId) = SwitchedOffMachine(manageDeps, scope, tvId)
     fun leftovers(scope: CoroutineScope, tvId: TvId) = LeftoversMachine(manageDeps, scope, tvId)
-    fun homeScreen(scope: CoroutineScope, tvId: TvId) = HomeScreenMachine(manageDeps, scope, tvId)
+    fun homeScreen(scope: CoroutineScope, tvId: TvId, again: Boolean = false) = HomeScreenMachine(manageDeps, scope, tvId, again)
     fun modules(scope: CoroutineScope, tvId: TvId) = ModulesMachine(manageDeps, scope, tvId)
     fun restorePoint(scope: CoroutineScope, tvId: TvId) = RestorePointMachine(manageDeps, scope, tvId)
     fun tvSettings(scope: CoroutineScope, tvId: TvId) = TvSettingsMachine(manageDeps, scope, tvId)
@@ -257,6 +264,9 @@ class AppGraph(context: Context, val appVersion: String = versionOf(context), va
             val m = model.trim()
             return if (maker.isEmpty() || m.startsWith(maker, ignoreCase = true)) m else "$maker $m"
         }
+
+        fun testBuild(): Boolean = tv.cleanyour.core.planner.HomeHelper.BUILD_ON || tv.cleanyour.core.planner.HomeSwitchRisk.ANY_BRAND_BUILD ||
+            runCatching { tv.cleanyour.core.spec.BundledProfileSource.bundled.profiles.any { it.isCandidate } }.getOrDefault(false)
 
         fun versionOf(context: Context): String =
             runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "unknown"

@@ -33,14 +33,23 @@
     <string name="manage_checked">Checked {date}</string>
     <string name="manage_tv_card_cd">{tv}. {state}. {checked}</string>
     <string name="manage_thumbnail_cd">The last picture from {tv}. Tap to refresh.</string>
-    <string name="manage_clean_again">Clean it up again</string>
+    <!-- 0.4.7 (UX finding 20, PM 11): the one name for the way back into Setup, shown for every TV -->
+    <string name="manage_clean_again">Run Setup again</string>
     <string name="manage_level_simple">Simple</string>
     <string name="manage_level_custom">Custom</string>
     <string name="manage_level_simple_note">Switches off the usual clutter and keeps everything else.</string>
-    <string name="manage_level_custom_note">Lets you choose each item, the dock and the look.</string>
+    <string name="manage_level_custom_note">Lets you choose each item yourself.</string>
     <string name="manage_row_home">Home screen</string>
     <string name="manage_row_home_own">The TV keeps its own. See why</string>
+    <!-- 0.4.7 (UX finding 8): the new home screen is installed but not in use -->
+    <string name="manage_row_home_not_in_use">The TV\'s own is in use</string>
+    <!-- 0.4.7 (StockHomeBack): Run Setup again is the primary button then -->
+    <!-- RFC-HELPER-1 (test build): the Home button helper is on -->
+    <string name="manage_row_home_helper">The Home button opens it. The TV\'s own stays on.</string>
+    <string name="manage_row_home_stock_back">The TV turned its own home screen back on.</string>
     <string name="manage_row_cards">Cards and modules</string>
+    <!-- 0.4.7 (UX finding 9): a card installs as an app while the TV keeps its own home screen -->
+    <string name="manage_row_cards_own_home">Shown as apps: this TV keeps its own home screen</string>
     <string name="manage_row_cards_none">No cards yet</string>
     <string name="manage_row_switched_off">{count, plural, other {Switched off (#)}}</string>
     <string name="manage_row_switched_off_sub">Put any of them back</string>
@@ -54,6 +63,15 @@
     <string name="manage_offline_banner">Lost the TV. Is it still on?</string>
     <string name="manage_reconnect">Reconnect</string>
     <string name="manage_reconnecting">Reconnecting...</string>
+    <!-- 0.4.8: what the app counted across the TV's restarts (Restarts), and the one tap that tells us -->
+    <string name="manage_restarts_held">{count, plural, one {Held through # restart} other {Held through # restarts}}</string>
+    <string name="manage_restarts_ask">It counts for this TV model. You see what goes first.</string>
+    <string name="manage_restarts_told">You told us on {date}. Thank you.</string>
+    <string name="manage_restarts_tell">Tell us it worked</string>
+    <string name="manage_restarts_tell_again">Tell us again</string>
+    <string name="manage_restart_failed">The TV\'s own home screen came back after a restart.</string>
+    <string name="manage_restart_failed_body">Tell us, so we can look at this TV model.</string>
+    <string name="manage_restart_report">Report a problem</string>
 
     <!-- M1a Debugging step for a returning write (UX 4.3, returning) -->
     <string name="debugstep_title">To change things on the TV, debugging needs to be on for a moment.</string>
@@ -61,6 +79,41 @@
     <string name="debugstep_note">You won\'t need to press Build again. Developer options stays unlocked.</string>
     <string name="debugstep_waiting">Waiting for the TV...</string>
     <string name="debugstep_connecting">Connecting...</string>
+    <!-- RFC-REACH-1: the debugging step says which case it is, and what the app sees -->
+    <string name="debugstep_off_why">It\'s off because we switched it off when we were done last time, as planned.</string>
+    <string name="debugstep_nowifi_title">Your phone isn\'t on Wi-Fi</string>
+    <string name="debugstep_nowifi_body">Join the same Wi-Fi as the TV. We\'ll carry on by ourselves.</string>
+    <string name="debugstep_allow_title">Look at the TV and allow this phone</string>
+    <string name="debugstep_allow_body">The TV is asking \"Allow USB debugging?\". Tick \"Always allow\", then choose Allow (OK on some TVs).</string>
+    <string name="debugstep_allow_code">The code on the TV ends in {tail}. That is this phone.</string>
+    <string name="debugstep_allow_waiting">Waiting for your tap on the TV...</string>
+    <string name="debugstep_details_show">Show details</string>
+    <string name="debugstep_details_hide">Hide details</string>
+    <string name="debugstep_sees">What the app sees</string>
+    <string name="debugstep_row_wifi">Phone on Wi-Fi</string>
+    <string name="debugstep_row_wifi_no">Join the same Wi-Fi as the TV.</string>
+    <string name="debugstep_row_network">Same network as when this TV was set up</string>
+    <string name="debugstep_row_network_no">Your network changed since setup. We\'re looking for the TV on this one.</string>
+    <string name="debugstep_row_saved">The TV answers at its saved address</string>
+    <string name="debugstep_row_saved_no">Switch on USB debugging on the TV. If it\'s on, the TV may have a new address.</string>
+    <string name="debugstep_row_found">The TV was found at another address on this network</string>
+    <string name="debugstep_row_found_no">Nothing on this Wi-Fi answered as this TV yet. We keep looking.</string>
+    <string name="debugstep_row_allow">The TV is waiting for you to allow this phone</string>
+    <string name="debugstep_row_allow_yes">Look at the TV: tick Always allow, then choose Allow.</string>
+    <string name="debugstep_yes">Yes</string>
+    <string name="debugstep_no">No</string>
+    <string name="debugstep_checking">Checking...</string>
+    <string name="debugstep_unknown">Can\'t tell</string>
+    <string name="debugstep_stuck">Still nothing? Some TVs open the Wi-Fi debugging port only after a restart, so restart the TV once. Some also need \"Network debugging\" or \"Wireless debugging\" switched on as well as USB debugging. And the TV may have a new address: it shows on the TV under Settings > Network.</string>
+    <string name="debugstep_report">Report a problem</string>
+    <string name="details_copy">Copy connection details</string>
+    <string name="details_share">Share</string>
+    <string name="details_collecting">Looking at the Wi-Fi and your TVs...</string>
+    <string name="details_copied">Copied. Paste it into a message or an issue.</string>
+    <string name="details_title">Connection details</string>
+    <string name="details_body">We look at the Wi-Fi and each saved TV for about 10 seconds, then copy what we saw. It has the names you gave your TVs, but never a Wi-Fi name, a whole address, a serial number or a key.</string>
+    <string name="appsettings_details">Connection details</string>
+    <string name="appsettings_details_note">What the app sees of your Wi-Fi and TVs, to copy or share</string>
 
     <!-- A Manage write that paused and left its run open (R5-W8 O2) -->
     <string name="openwrite_title">A change on {tv} didn\'t finish</string>
@@ -83,6 +136,10 @@
     <string name="openwrite_body_took_home">Once {app} was back on, the TV gave it the Home button, so Home no longer opens the new home screen. Switch {app} off again to get the new one back, or keep it.</string>
     <string name="openwrite_switch_off_again">Switch it off again</string>
     <string name="openwrite_keep_it">Keep it</string>
+    <!-- 0.4.7 (UX finding 19): a look send that paused did not reach the TV -->
+    <string name="openwrite_title_look">Your look didn\'t reach {tv}</string>
+    <string name="openwrite_body_look">Nothing else changed. Send it again, or undo to keep the look the TV had. Until then nothing else can change on this TV.</string>
+    <string name="openwrite_send_again">Send it again</string>
 
     <!-- M4 Switched off -->
     <string name="switchedoff_title">{count, plural, other {Switched off (#)}}</string>
@@ -190,6 +247,9 @@
     <!-- 0.3.2 B1: an unlisted TV on Manage -->
     <string name="manage_help_add_tv_banner">We haven\'t met this exact TV before, so we were careful with it. A short report from you helps us add it.</string>
     <string name="manage_help_add_tv">Help add this TV</string>
+    <!-- 0.4.7 (must 4): the report sent before (SentReports) -->
+    <string name="manage_report_sent_banner">You sent this TV\'s report on {date}. We\'ll post in your issue when there\'s news.</string>
+    <string name="manage_send_again">Send again</string>
     <string name="manage_wizard_home_title">The setup wizard can take the Home button</string>
     <string name="manage_wizard_home_body">Switch the TV\'s own home screen back on so the TV keeps starting normally.</string>
     <string name="manage_wizard_home_button">Switch it back on</string>
@@ -199,6 +259,11 @@
     <string name="report_tv_title">Help add this TV</string>
     <string name="report_tv_body">This report says what this TV is and which apps it came with, so we can make a list for it. Apps you installed yourself are only counted, never named.</string>
     <string name="report_problem_title">Report a problem</string>
+    <!-- 0.4.8: "Tell us it worked", the confirmation's preview (ReportKind.CONFIRM) -->
+    <string name="report_confirm_title">Tell us it worked</string>
+    <string name="report_confirm_body">This says the new home screen held on this TV, with the TV\'s model and what the app counted. Nothing else: no names, no addresses.</string>
+    <string name="report_confirm_unavailable">No restart has been counted on this TV yet. Restart it once with the app connected, then try again.</string>
+    <string name="report_confirm_label">What goes to GitHub</string>
     <string name="report_problem_body">This report has the steps we ran and a short summary of the TV, as plain text. Addresses, serial numbers, keys and codes are removed first. The steps can name apps we switched off or tried to.</string>
     <string name="report_public">This is public if you post it on GitHub. The app sends nothing itself: you choose where it goes.</string>
     <string name="report_preview_label">The report</string>
@@ -213,4 +278,12 @@
     <string name="report_share">Share</string>
     <string name="report_loading">Making the report</string>
     <string name="report_unavailable">We need to read this TV once before we can make its report. Set it up or connect to it, then try again.</string>
+    <!-- 0.4.7 (must 4): the TV report was sent before; the issue link once pasted -->
+    <string name="report_sent_line">You sent this TV\'s report on {date}. We\'ll post in your issue when there\'s news. You can send it again.</string>
+    <string name="report_sent_issue">Your issue: {issue}. Open it to see the news.</string>
+    <string name="report_issue_label">Your issue\'s link (optional)</string>
+    <string name="report_issue_hint">Paste the link of the issue the report went to, and we\'ll remember it here.</string>
+    <string name="report_issue_error">That isn\'t a link to an issue of this app on GitHub.</string>
+    <string name="report_issue_save">Remember it</string>
+    <string name="report_issue_open">Open the issue</string>
 </resources>

@@ -54,7 +54,9 @@ data class WizardDraft(val step: Int, val level: Level, val kept: Set<PackageNam
     val columns: Int? = null, val picture: String? = null,
     // look2: the look step's choice in home.txt line form (HomePrefs), null before the look step made
     // one; themeId, columns and picture stay for the legacy (0.4.0) form.
-    val look: String? = null)
+    val look: String? = null,
+    // RFC-HELPER-1 (test build): the Customise switch "Home button helper", after its consent.
+    val homeHelper: Boolean = false)
 
 sealed interface ConnectionState {
     data object Idle : ConnectionState

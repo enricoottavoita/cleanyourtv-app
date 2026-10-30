@@ -40,12 +40,12 @@ class DoneDebugLineTest {
     @Test fun keepDebuggingOnSaysItStaysOn() {
         show(SetupExtras(tvName = "Mi TV 4A", chip = ChipState.CONNECTED, keepsDebugging = true))
         compose.onNodeWithText("Debugging on the TV stays on, as you chose").assertExists()
-        compose.onAllNodesWithText("Debugging on the TV switches off when you tap Finish").fetchSemanticsNodes().let { check(it.isEmpty()) { "the switch off line is shown" } }
+        compose.onAllNodesWithText("Debugging on the TV switches off when you tap Finish. Next time, switch it on again with the remote.").fetchSemanticsNodes().let { check(it.isEmpty()) { "the switch off line is shown" } }
     }
 
     @Test fun otherwiseFinishSwitchesItOff() {
         show(SetupExtras(tvName = "Mi TV 4A", chip = ChipState.CONNECTED))
-        compose.onNodeWithText("Debugging on the TV switches off when you tap Finish").assertExists()
+        compose.onNodeWithText("Debugging on the TV switches off when you tap Finish. Next time, switch it on again with the remote.").assertExists()
         compose.onAllNodesWithText("Debugging on the TV stays on, as you chose").fetchSemanticsNodes().let { check(it.isEmpty()) { "the stays on line is shown" } }
     }
 }

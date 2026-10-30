@@ -348,13 +348,18 @@ class DefaultEngine(
             val last = run.thumbnail?.let { "the last one was ${it.size} bytes" } ?: "none came back before"
             return notOpened("the screenshot failed (${run.thumbnailFailure}), $last")
         }
-        val arm = run.plan.steps.getOrNull(section.from)?.op as? Op.ArmHomeWatchdog ?: return notOpened("the section does not start with its watchdog")
-        if (arm.token != section.token) return notOpened("the watchdog's run token is not the section's")
-        journal.append(JournalRecord.Section(run.plan.id, section.name, section.token, SectionState.ARMED, clock.nowMs() + arm.seconds * 1000L))
+        // RFC-HELPER-1: the Home button helper's section starts with its own safety timer.
+        val (armToken, armSeconds) = when (val arm = run.plan.steps.getOrNull(section.from)?.op) {
+            is Op.ArmHomeWatchdog -> arm.token to arm.seconds
+            is Op.ArmHelperWatchdog -> arm.token to arm.seconds
+            else -> return notOpened("the section does not start with its watchdog")
+        }
+        if (armToken != section.token) return notOpened("the watchdog's run token is not the section's")
+        journal.append(JournalRecord.Section(run.plan.id, section.name, section.token, SectionState.ARMED, clock.nowMs() + armSeconds * 1000L))
         run.openSections += section.name
         run.sectionOpenedAt = clock.monotonicMs()
         // Taken before the arm step is sent, so it is no later than the watchdog's real deadline.
-        run.watchdogDeadlineMono = run.sectionOpenedAt + arm.seconds * 1000L
+        run.watchdogDeadlineMono = run.sectionOpenedAt + armSeconds * 1000L
         return true
     }
 
@@ -396,8 +401,18 @@ class DefaultEngine(
             } catch (e: AdbException) {
                 if (e.error.isLost()) return HomeOutcome.CONNECTION_LOST else null
             }
+            // RFC-HELPER-1: with the helper the TV's own home screen shows for a moment before the new
+            // one (PLAN 3.3; seconds on a slow TV, as on the emulator), so a focus on it counts only
+            // when it is still there at each of the next looks.
+            val stays = focus != null && focus.pkg in section.rollbackIfFocus && StepR.isHelper(section) && try {
+                var still = true
+                repeat(HELPER_FOCUS_LOOKS) { if (still) { delay(HELPER_FOCUS_AGAIN_MS); still = prober.homeFocus(run.session)?.pkg == focus.pkg } }
+                still
+            } catch (e: AdbException) {
+                if (e.error.isLost()) return HomeOutcome.CONNECTION_LOST else false
+            }
             if (focus != null) {
-                if (focus.pkg in section.rollbackIfFocus) {
+                if (focus.pkg in section.rollbackIfFocus && (stays || !StepR.isHelper(section))) {
                     // Issues #153, #339, #375, #385: the log said WRONG_FOCUS and nothing about what
                     // was in front, so no report could tell the setup wizard from Settings or the chooser.
                     // The TV's own: a system app, or one of the home screens, wizards and settings apps
@@ -464,20 +479,37 @@ class DefaultEngine(
     // done and verified. Once VerifyHome passes, the TV's own home screen is back, so a refusal before
     // it (Fire OS refuses pm enable of its protected launcher) is a skip, its Failed record kept; the
     // run pauses only when the TV's own home screen is really not back.
+    //
+    // Issue #2028 (a Jio set-top box): Home answered to the operator's own launcher, which Android ranks
+    // above every other claimant, so the switch never took Home, and step R's SetHome and VerifyHome of
+    // the stock home (tvlauncher, switched off and on again) failed on every Carry on while the TV was as
+    // it was. Home as it was before the switch (homeBefore) is the TV's own home screen back too, so step
+    // R's SetHome and VerifyHome hold on it; an Enable that failed then still pauses the run, as nothing
+    // shows that package on again. A SetHome of the section that never took effect (not done: its check
+    // failed, or it never ran) changed no Home, so the failure of the SetHome that undoes it is no reason
+    // to pause on its own; VerifyHome still decides. Home on anything else still pauses the run.
     private suspend fun rollbackSection(run: Run, section: GuardedSection, outcome: HomeOutcome): Boolean {
         flow(run.plan.tvId).value = RunState.RollingBack(run.plan, section.from)
         journal.append(JournalRecord.Rollback(run.plan.id, section.from))
+        val before = homeBefore(run, section)
+        val setHome = run.plan.steps.firstOrNull { it.index in section.from..section.to && it.op is Op.SetHome }
+        val setHomeNoEffect = setHome != null && setHome.index !in run.done
         var failed: AdbError? = null   // the first failure since the last VerifyHome that passed
+        var enableFailed: AdbError? = null   // the first Enable that failed, which Home as before does not clear
         for (op in section.rollback) {
             if (!StepR.allows(op, section)) continue
             val undone = run.plan.steps.firstOrNull { it.index in section.from..section.to && undoes(op, it.op) }?.index ?: -1
             val rendered = try { renderer.render(op) } catch (e: RenderRefused) { continue }
-            when (val r = performStepR(run, undone, op, rendered)) {
-                is Outcome.Lost -> { pause(run, PauseReason.CONNECTION_LOST, r.error); return false }
-                is Outcome.Refused -> if (StepR.mustSucceed(op) && failed == null) failed = AdbError.NonZeroExit(r.exit, r.stderr.take(4096))
-                is Outcome.Failed -> if (StepR.mustSucceed(op) && failed == null) failed = r.error
-                Outcome.Ok -> if (op is Op.VerifyHome) failed = null
+            val counts = StepR.mustSucceed(op) && !(op is Op.SetHome && setHomeNoEffect)
+            val r = performStepR(run, undone, op, rendered, before)
+            val error = when (val o = r.outcome) {
+                is Outcome.Lost -> { pause(run, PauseReason.CONNECTION_LOST, o.error); return false }
+                is Outcome.Refused -> AdbError.NonZeroExit(o.exit, o.stderr.take(4096))
+                is Outcome.Failed -> o.error
+                Outcome.Ok -> { if (op is Op.VerifyHome) failed = if (r.asBefore) enableFailed else null; null }
             }
+            if (error != null && counts && failed == null) failed = error
+            if (error != null && op is Op.Enable && enableFailed == null) enableFailed = error
         }
         if (failed != null) { pause(run, PauseReason.STEP_FAILED, failed); return false }
         journal.append(JournalRecord.Section(run.plan.id, section.name, section.token, SectionState.ROLLED_BACK, clock.nowMs()))
@@ -491,7 +523,9 @@ class DefaultEngine(
     // target is read (targetHolds: a read that proves the state, never an empty or failed one); if it
     // holds (the package enabled, HOME on the stock launcher, no watchdog left), Done
     // (verified) is journaled instead of Failed, so the change records see the item as put back.
-    private suspend fun performStepR(run: Run, index: Int, op: Op, rendered: Rendered): Outcome {
+    // Issue #2028: a SetHome or VerifyHome also holds when HOME answers to `before`, the home screen
+    // before the switch (asBefore).
+    private suspend fun performStepR(run: Run, index: Int, op: Op, rendered: Rendered, before: Component? = null): StepROutcome {
         journal.append(JournalRecord.Begin(run.plan.id, index, op, rendered.lines.map { it.text }, null, clock.nowMs()))
         val started = clock.monotonicMs()
         val outcome = try {
@@ -499,12 +533,14 @@ class DefaultEngine(
         } catch (e: AdbException) {
             if (e.error.isLost()) Outcome.Lost(e.error) else Outcome.Failed(e.error, e.error.toString())
         }
+        var asBefore = false
         val held = when {
             outcome == Outcome.Ok || outcome is Outcome.Lost -> false
             else -> try {
-                targetHolds(run.session, op, rendered)
+                targetHolds(run.session, op, rendered) ||
+                    ((op is Op.SetHome || op is Op.VerifyHome) && before != null && homeAnswers(run.session, before)).also { asBefore = it }
             } catch (e: AdbException) {
-                if (e.error.isLost()) return Outcome.Lost(e.error)   // in doubt: no Done, no Failed; resume runs step R again
+                if (e.error.isLost()) return StepROutcome(Outcome.Lost(e.error))   // in doubt: no Done, no Failed; resume runs step R again
                 false
             }
         }
@@ -516,7 +552,23 @@ class DefaultEngine(
             outcome is Outcome.Failed -> journal.append(JournalRecord.Failed(run.plan.id, index, null, outcome.detail.take(4096), ""))
             else -> {}
         }
-        return if (held) Outcome.Ok else outcome
+        return StepROutcome(if (held) Outcome.Ok else outcome, asBefore)
+    }
+
+    private class StepROutcome(val outcome: Outcome, val asBefore: Boolean = false)
+
+    // Issue #2028: the home screen HOME answered to before the switch, as the plan recorded it: the prior
+    // of the section's SetHome (StockHome.recorded, so never a placeholder), unless it is the new home screen.
+    private fun homeBefore(run: Run, section: GuardedSection): Component? =
+        run.plan.steps.firstOrNull { it.index in section.from..section.to && it.op is Op.SetHome }?.prior?.home
+            ?.takeUnless { StockHome.isPlaceholder(it) || it == section.expectedHome }
+
+    // Whether the HOME resolver names `home`, by VerifyHome's own read and check.
+    private suspend fun homeAnswers(session: TvSession, home: Component): Boolean {
+        val check = Op.VerifyHome(home)
+        val read = try { renderer.render(check) } catch (e: RenderRefused) { return false }
+        val r = readResult(session, read) ?: return false
+        return r.exit == 0 && r.stdout.isNotBlank() && renderer.check(check, r.stdout, null) == VerifyResult.Ok
     }
 
     // Whether an op's target state already holds on the TV, from a read that proves it: the read must
@@ -563,6 +615,8 @@ class DefaultEngine(
     private fun undoes(rollbackOp: Op, stepOp: Op): Boolean = when (rollbackOp) {
         is Op.Enable -> stepOp is Op.Disable && stepOp.pkg == rollbackOp.pkg
         is Op.SetHome -> stepOp is Op.SetHome
+        is Op.AccessibilityRemove -> stepOp is Op.AccessibilityAdd && stepOp.component == rollbackOp.component   // RFC-HELPER-1
+        is Op.SettingsPut -> stepOp is Op.SettingsPut && stepOp.key == rollbackOp.key && rollbackOp.key == SettingKey.ACCESSIBILITY_ENABLED
         else -> false
     }
 
@@ -672,13 +726,16 @@ class DefaultEngine(
             }
             else -> {}
         }
+        // RFC-THEME-1: a push goes first, so a line can use the file it put there (the launcher provider's write
+        // reads its staged copy); a pull goes after the lines that made its file (the screenshot).
+        (rendered.transfer as? Transfer.Push)?.let { t -> session.push(t.src, t.dest) }
         for (line in rendered.lines) {
             val r = send(session, line, ExecSpec(timeoutMs = rendered.timeoutMs, stdoutCap = rendered.stdoutCap, retry = RetryClass.NEVER))
             if (r.exit != 0) return Outcome.Refused(r.exit, r.stderr)
             ownOutput = r.stdout
         }
         when (val t = rendered.transfer) {
-            is Transfer.Push -> session.push(t.src, t.dest)
+            is Transfer.Push -> {}
             is Transfer.Pull -> { run.thumbnail = session.pull(t.src, t.maxBytes) }
             is Transfer.StreamInstall -> when (val o = session.installStream(t.src, t.size)) {
                 InstallOutcome.Installed -> {}
@@ -1102,6 +1159,9 @@ class DefaultEngine(
     companion object {
         val GATED = setOf(Privilege.PROFILE_STEP, Privilege.COMMUNITY, Privilege.TAKEOVER)
         const val WATCHDOG_MARGIN_MS = 10_000L   // the phone's window ends at least this long before the watchdog fires (R1 R-1)
+        // RFC-HELPER-1: the looks again at a focus on the TV's own home screen, and how far apart.
+        const val HELPER_FOCUS_LOOKS = 3
+        const val HELPER_FOCUS_AGAIN_MS = 1_500L
         // 0.4.6: the check's extra Home presses while a TV app is in front: at most this many, this
         // far apart, within this long of the section opening (about the first minute after the TV
         // starts, when a TV that starts on its last input brings that input up).
@@ -1143,6 +1203,7 @@ internal object JournalStepR {
         }
         val section = armed ?: return null
         val inside = records.drop(armedAt + 1).takeWhile { it !is JournalRecord.Rollback }.filterIsInstance<JournalRecord.Begin>()
+        helperStepR(inside, section, start, tvId)?.let { return it }
         val arm = inside.firstOrNull { (it.op as? Op.ArmHomeWatchdog)?.token == section.token } ?: return null   // never armed: nothing on the TV changed
         val stock = (arm.op as Op.ArmHomeWatchdog).stock
         val disabled = inside.mapNotNull { (it.op as? Op.Disable)?.pkg }.distinct()
@@ -1164,16 +1225,43 @@ internal object JournalStepR {
 
 // Step R's vocabulary (PRODUCT-SPEC 3.4): defuse both layers for this section's token, then the
 // TV's own home screen back. Anything else in a plan file's rollback list is ignored.
+// RFC-HELPER-1: the Home button helper's section (SECTION_HELPER) has a vocabulary of its own: our
+// entries out of the accessibility list, accessibility_enabled back to 0, the timer defused, Home.
+// It never enables a package or changes HOME, and the home switch's step R never touches the list.
 internal object StepR {
+    fun isHelper(section: GuardedSection): Boolean = section.name == DefaultPlanner.SECTION_HELPER
+
     fun allows(op: Op, section: GuardedSection): Boolean = when (op) {
         is Op.ConfirmHome -> op.token == section.token
         is Op.KillWatchdog -> op.token == section.token
-        is Op.Enable, is Op.SetHome, is Op.VerifyHome, Op.PressHome -> true
+        Op.PressHome -> true
+        is Op.Enable, is Op.SetHome, is Op.VerifyHome -> !isHelper(section)
+        is Op.AccessibilityRemove -> isHelper(section)
+        is Op.SettingsPut -> isHelper(section) && op.key == SettingKey.ACCESSIBILITY_ENABLED && op.value == "0"
         else -> false
     }
 
-    // The ops whose failure means the TV's own home screen is not back.
-    fun mustSucceed(op: Op): Boolean = op is Op.Enable || op is Op.SetHome || op is Op.VerifyHome
+    // The ops whose failure means the TV's own home screen is not back (with the helper: that our
+    // entry is still in the list).
+    fun mustSucceed(op: Op): Boolean = op is Op.Enable || op is Op.SetHome || op is Op.VerifyHome || op is Op.AccessibilityRemove
+}
+
+// RFC-HELPER-1: step R of an open helper section from the journal alone. The add's Begin gives the
+// list it wrote; the accessibility_enabled write, when one began, says whether it went on from 0.
+private fun helperStepR(inside: List<JournalRecord.Begin>, section: JournalRecord.Section, start: JournalRecord.PlanStart, tvId: TvId): Plan? {
+    val arm = inside.firstOrNull { (it.op as? Op.ArmHelperWatchdog)?.token == section.token } ?: return null
+    val add = inside.firstNotNullOfOrNull { it.op as? Op.AccessibilityAdd }
+    val on = inside.firstOrNull { (it.op as? Op.SettingsPut)?.let { p -> p.key == SettingKey.ACCESSIBILITY_ENABLED && p.value == "1" } == true }
+    val service = (arm.op as Op.ArmHelperWatchdog).component
+    val remove = if (add != null) Op.AccessibilityRemove(tv.cleanyour.core.ops.HelperLines.appended(add.expected, add.component), service) else Op.AccessibilityRemove(null, service)
+    val rollback: List<Op> = listOfNotNull(remove, on?.let { Op.SettingsPut(SettingKey.ACCESSIBILITY_ENABLED, "0") },
+        Op.ConfirmHome(section.token), Op.KillWatchdog(section.token), Op.PressHome)
+    val guarded = GuardedSection(section.name, arm.i, inside.maxOf { it.i }, section.token, 0L, Component(service.pkg, ".MainActivity"), emptySet(), rollback)
+    return Plan(
+        id = start.planId, tvId = tvId, kind = PlanKind.SETUP, baseSnapshot = start.base, steps = emptyList(),
+        sections = listOf(guarded), summary = PlanSummary(emptyList(), emptyList(), emptyList(), false, false),
+        hash = start.hash, createdAtMs = start.atMs, appVersion = start.app,
+    )
 }
 
 // What a journal says about a run, for resume.
@@ -1246,6 +1334,14 @@ internal object Staleness {
                 is Op.SettingsPut -> if (op.key in snapshot.settings) {
                     val now = snapshot.settings[op.key]
                     if (now != prior.settingValue) out += "${op.key.key}: was ${prior.settingValue ?: "unset"}, now ${now ?: "unset"}"
+                }
+                // RFC-HELPER-1: the helper's compare-and-set writes only over the list it was planned on.
+                is Op.AccessibilityAdd, is Op.AccessibilityRemove -> if (SettingKey.ENABLED_ACCESSIBILITY in snapshot.settings) {
+                    val now = snapshot.settings[SettingKey.ENABLED_ACCESSIBILITY]
+                    val planned = when (op) { is Op.AccessibilityAdd -> op.expected; is Op.AccessibilityRemove -> op.expected; else -> null }
+                    val compared = op is Op.AccessibilityAdd || planned != null
+                    fun norm(v: String?) = v?.takeIf { it.isNotEmpty() && it != "null" }
+                    if (compared && norm(now) != norm(planned)) out += "${SettingKey.ENABLED_ACCESSIBILITY.key}: was ${norm(planned) ?: "unset"}, now ${norm(now) ?: "unset"}"
                 }
                 // WP4 (B5): the planner records the stock home as the prior while HOME answers with
                 // the chooser, a placeholder or nothing (StockHome.recorded), so that answer is no change,

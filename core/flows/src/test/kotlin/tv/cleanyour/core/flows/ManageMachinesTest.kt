@@ -690,8 +690,9 @@ class ManageMachinesTest {
         assertEquals(sha256Of(bytes), apply.config.sha256)
         val back = assertIs<DecodeResult.Ok>(LauncherConfigCodec.decode(bytes)).doc
         // RFC-CARDS-1: no kept choice and no overlay on the TV: Manage keeps the launcher's default, on.
-        // 0.4.0: fill_dock false in every push.
-        assertEquals(LauncherConfigDoc(dockApps = six, rowsBelowDock = 1, moduleCards = true, fillDock = false), back)
+        // 0.4.0: fill_dock false for a dock the person set (0.4.7: the Dock sheet's). 0.4.7: the TV's
+        // Live TV app (Samples' com.android.tv), for the Inputs menu's Live TV row.
+        assertEquals(LauncherConfigDoc(dockApps = six, rowsBelowDock = 1, moduleCards = true, fillDock = false, liveTvPackage = "com.android.tv"), back)
         assertEquals(six, m.state.value.dock.map { it.pkg })
         // Later the second app is switched off on the TV: the rest move up a slot, as on the TV.
         h.snapshots.save(Samples.snapshot(packages = Samples.miTvPackages() + six.associateWith { state(it != six[1]) }, takenAtMs = Samples.NOW_MS + 2))
@@ -1082,6 +1083,43 @@ class ManageMachinesTest {
         assertFalse(assertNotNull(m2.state.value.current).wizardHome)
         m2.dispatch(ManageIntent.SwitchStockHomeOn); settle()
         assertTrue(quiet.planner.requests.none { it is PlanRequest.UseStockHome })
+    }
+
+    // 0.4.7 (xgimi-mogo-3-pro): the TV's own home screen this phone switched off claims Home again (XGIMI's remote
+    // buttons run pm enable on launcherx); Manage's connect read notices it, the card says so and the log has a line.
+    @Test fun aStockHomeScreenTheFirmwareSwitchedBackOnIsNoticedOnConnect() = runTest(timeout = 30.seconds) {
+        val h = Harness()
+        val tv = h.knownTv()
+        val stock = Samples.stockLauncher
+        val plan = h.plan(listOf(Op.ArmHomeWatchdog(stock, 150, RunToken("00000000000000ab")), Op.Disable(stock.pkg), Op.SetHome(Launcher.home)), id = "01FAKERUN0000000000000010")
+        h.ledger.record(plan)
+        h.journal.append(JournalRecord.PlanStart(plan.id, tv.id, Samples.zeroHash, 3, plan.hash, "0.1.0", 0))
+        plan.steps.forEach { st ->
+            h.journal.append(JournalRecord.Begin(plan.id, st.index, st.op, listOf("fake"), if (st.op is Op.SetHome) Prior(home = stock) else null, 10L + st.index))
+            h.journal.append(JournalRecord.Done(plan.id, st.index, 0, true, 5))
+        }
+        h.journal.append(JournalRecord.End(plan.id, RunStatus.COMPLETED))
+        h.prober.home = HomeResolution(stock, listOf(HomeClaimant(stock, 2), HomeClaimant(Launcher.home, 0)))
+        val d = h.manageDeps()
+        val m = ManageMachine(d, backgroundScope, tv.id)
+        settle()
+        assertTrue(assertNotNull(m.state.value.current).stockHomeBack)
+        assertFalse(assertNotNull(m.state.value.current).wizardHome)
+        assertEquals(listOf("manage: the TV's own home screen is on again after this app switched it off, and Home answers to it"),
+            h.logLines.filter { it.startsWith("manage:") })
+        // A problem report says so in its Home screen lines, which are never cut.
+        val input = assertNotNull(ProblemReports.input(d, tv.id))
+        assertTrue(input.stockHomeBack)
+        assertTrue(TvReport.text(input).lines().contains("Since then: the TV's own home screen, switched off by this app, is on again and claims Home"))
+        // Read again with the same answer: one log line, not one per connect.
+        m.dispatch(ManageIntent.Select(tv.id)); settle()
+        assertEquals(1, h.logLines.count { it.startsWith("manage:") })
+        // Off again (or put back by the person through this app): nothing to say.
+        h.prober.home = HomeResolution(Launcher.home, listOf(HomeClaimant(Launcher.home, 0)))
+        m.dispatch(ManageIntent.Select(tv.id)); settle()
+        assertFalse(assertNotNull(m.state.value.current).stockHomeBack)
+        assertFalse(assertNotNull(ProblemReports.input(d, tv.id)).stockHomeBack)
+        assertFalse(StockHomeBack.applies(HomeResolution(stock, listOf(HomeClaimant(stock, 2))), emptyList(), stock), "never switched off by this app")
     }
 
     // 0.4.6: a put back whose app took the Home button pauses at the Home check after it

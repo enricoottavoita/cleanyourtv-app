@@ -43,7 +43,7 @@ internal object EarlierLook {
     }
 
     // The look part of a choice (not its dock or cards), to tell whether two choices look different.
-    fun lookOf(c: HomeChoice?): String? = c?.let { HomePrefs.encode(it.copy(dock = emptyList(), cards = null)) }
+    fun lookOf(c: HomeChoice?): String? = c?.let { HomePrefs.encode(it.copy(dock = emptyList(), cards = null, dockChosen = true)) }
 
     // The earlier look differs from what was last sent (so "Put back the earlier look" shows).
     fun differs(earlier: Saved, sent: HomeChoice?, mine: LookPicture.Of?): Boolean {

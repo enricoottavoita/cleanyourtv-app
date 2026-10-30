@@ -4,6 +4,7 @@ import tv.cleanyour.core.model.BlobRef
 import tv.cleanyour.core.model.ChangeRecord
 import tv.cleanyour.core.model.Component
 import tv.cleanyour.core.model.EnabledState
+import tv.cleanyour.core.model.FileRoute
 import tv.cleanyour.core.model.GroupDefault
 import tv.cleanyour.core.model.HomeClaimant
 import tv.cleanyour.core.model.HomeResolution
@@ -122,17 +123,17 @@ object PlannerFixtures {
 class OverlayTransport : ConfigTransport {
     override val kind: ConfigTransportKind = ConfigTransportKind.FILE_OVERLAY
     override suspend fun readDigest(session: TvSession): Sha256? = null
-    override fun writePlanSteps(config: BlobRef, wallpaper: BlobRef?): List<Op> {
+    override fun writePlanSteps(config: BlobRef, wallpaper: BlobRef?, route: FileRoute): List<Op> {
         require(config.size in 1..64L * 1024) { "config.json must be 1 to 65536 bytes" }
         return listOf(
             Op.StartActivity(PlannerFixtures.launcher, wait = true),
-            Op.Mkdir(RemoteDir.OVERLAY),
-            Op.PushAsset(config, CONFIG, config.sha256),
-            if (wallpaper != null) Op.PushAsset(wallpaper, WALLPAPER, wallpaper.sha256) else Op.RemoveFile(WALLPAPER),
+            Op.Mkdir(if (route == FileRoute.THEME_PROVIDER) RemoteDir.TMP else RemoteDir.OVERLAY),
+            Op.PushAsset(config, CONFIG, config.sha256, route),
+            if (wallpaper != null) Op.PushAsset(wallpaper, WALLPAPER, wallpaper.sha256, route) else Op.RemoveFile(WALLPAPER, route),
             Op.RestartHome(PlannerFixtures.launcher),
         )
     }
-    override fun resetPlanSteps(): List<Op> = listOf(Op.RemoveFile(CONFIG), Op.RemoveFile(WALLPAPER), Op.RestartHome(PlannerFixtures.launcher))
+    override fun resetPlanSteps(route: FileRoute): List<Op> = listOf(Op.RemoveFile(CONFIG, route), Op.RemoveFile(WALLPAPER, route), Op.RestartHome(PlannerFixtures.launcher))
 
     companion object {
         val CONFIG = RemotePath(RemoteDir.OVERLAY, listOf("config.json"))
@@ -172,7 +173,28 @@ class ModelTv(snapshot: Snapshot) {
         is Op.SettingsPut -> Prior(settingValue = settings[op.key])
         is Op.Install -> Prior(present = op.pkg in packages)
         is Op.InstallStream -> Prior(present = op.pkg in packages)
+        is Op.AccessibilityAdd, is Op.AccessibilityRemove -> Prior(settingValue = settings[SettingKey.ENABLED_ACCESSIBILITY])
         else -> Prior()
+    }
+
+    // RFC-HELPER-1: the helper's compare-and-set as the TV's sh runs it (HelperLinesTest): unset,
+    // empty and "null" read alike; a list that changed is left as it is and nothing is recorded.
+    private fun norm(v: String?) = v?.takeIf { it.isNotEmpty() && it != "null" }
+    private fun helper(op: Op): Boolean {
+        val now = norm(settings[SettingKey.ENABLED_ACCESSIBILITY])
+        return when (op) {
+            is Op.AccessibilityAdd -> if (now != norm(op.expected)) false
+                else { settings[SettingKey.ENABLED_ACCESSIBILITY] = tv.cleanyour.core.ops.HelperLines.appended(op.expected, op.component); true }
+            is Op.AccessibilityRemove -> {
+                if (op.expected != null && now != norm(op.expected)) return false
+                val left = tv.cleanyour.core.ops.HelperLines.without(now, op.component)
+                if (left == now) return false
+                settings[SettingKey.ENABLED_ACCESSIBILITY] = left
+                if (left == null && op.offIfEmpty) settings[SettingKey.ACCESSIBILITY_ENABLED] = "0"
+                true
+            }
+            else -> false
+        }
     }
 
     // True when the op is a change (so a ChangeRecord is kept), as the engine's journal would.
@@ -185,6 +207,7 @@ class ModelTv(snapshot: Snapshot) {
         is Op.Install -> { packages[op.pkg] = PackageState(EnabledState.ENABLED, false, op.versionCode, op.signer, false, false, null, true); true }
         is Op.InstallStream -> { packages[op.pkg] = PackageState(EnabledState.ENABLED, false, op.versionCode, op.signer, false, false, null, true); true }
         is Op.Uninstall -> { packages.remove(op.pkg); claimants.removeAll { it.pkg == op.pkg }; if (home?.pkg == op.pkg) home = claimants.firstOrNull(); true }
+        is Op.AccessibilityAdd, is Op.AccessibilityRemove -> helper(op)
         else -> false
     }
 

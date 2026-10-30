@@ -39,7 +39,7 @@
     <string name="home_not_on_tv_lead">{tv} keeps its own home screen. The dock and the look belong to the new home screen, and it isn\'t on this TV.</string>
     <string name="home_not_on_tv_refuses">{brand} only allows its own home screen, so Setup didn\'t add ours. The clean-up works without it.</string>
     <string name="home_not_on_tv_old_android">The new home screen needs Android 8 or newer, so Setup didn\'t add it. The clean-up works without it.</string>
-    <string name="home_not_on_tv_unknown_home">We don\'t know this TV\'s own home screen well enough to swap it safely, so Setup left it alone.</string>
+    <string name="home_not_on_tv_unknown_home">We don\'t know this TV\'s own home screen well enough to switch it safely, so Setup left it alone.</string>
     <string name="home_not_on_tv_wizard_wifi">This TV\'s Wi-Fi was saved by its setup wizard. The new home screen needs the wizard off, which would forget the Wi-Fi, and with the wizard left on the TV can crash. So Setup left the home screen alone.</string>
     <string name="home_not_on_tv_wizard_wifi_unlisted">This TV\'s Wi-Fi was saved by its setup wizard, and we don\'t know this TV well enough yet to switch the wizard off safely. With the wizard left on, a new home screen can crash the TV, so Setup left it alone.</string>
     <string name="home_not_on_tv_wizard_wifi_unknown">We couldn\'t check who saved this TV\'s Wi-Fi. The new home screen needs the setup wizard off, which could forget the Wi-Fi, so Setup left the home screen alone.</string>
@@ -51,22 +51,36 @@
     <!-- beta3: the home screen was left alone by Setup with an earlier version of the app or another list -->
     <string name="home_not_on_tv_earlier">Setup left the home screen alone when it last ran, but this app has changed since and may now add the new home screen.</string>
     <string name="home_not_on_tv_other_home">Another home screen app is set up on this TV, so Setup left the home screen alone.</string>
-    <string name="home_not_on_tv_next_other_home">To use the new one, remove that app, then run Setup again. Or ask us in your issue.</string>
+    <string name="home_not_on_tv_next_other_home">To use the new one, remove that app, then run Setup again. Or tell us with Report a problem.</string>
     <!-- beta4: a system service also answers Home (issue #825) -->
     <string name="home_not_on_tv_vendor_home">On this TV a system service also answers the Home button. One TV like that failed to start after its home screen was switched, so Setup left the home screen alone.</string>
     <!-- beta4: PatchWall stays on while Mi TV+ or its web content is off, not by this app (issue #945) -->
     <string name="home_not_on_tv_patchwall_feeds">PatchWall is on while Mi TV+ or its web content is off. One TV like that failed to start after its home screen was switched, so Setup left the home screen alone.</string>
     <string name="home_not_on_tv_next_patchwall_feeds">To use the new one, run Setup again and switch PatchWall off in Customise.</string>
     <string name="home_not_on_tv_none">The new home screen isn\'t installed on this TV right now.</string>
-    <string name="home_not_on_tv_next_wifi">To change this, forget the Wi-Fi network in the TV\'s Settings and add it again, or use a network cable. Then run Setup again.</string>
+    <string name="home_not_on_tv_next_wifi">To change this, forget every Wi-Fi network saved on the TV, then join yours again. A cable alone doesn\'t change it. Then run Setup again.</string>
     <string name="home_not_on_tv_next_check">Running Setup again checks once more.</string>
     <string name="home_not_on_tv_next_home_changed">If you\'d like the new home screen, set the TV\'s own home screen back as Home in the TV\'s settings, then run Setup again.</string>
     <string name="home_not_on_tv_next_setup">Run Setup again to add it.</string>
-    <string name="home_not_on_tv_next_list">What would change this is a list made for this TV. Send us its report and we\'ll make one; a later version may then offer the new home screen.</string>
+    <string name="home_not_on_tv_next_list">What would change this is a list made for this TV. Help add this TV sends us its report; we make the list from reports like yours and post in your issue when there\'s one to try.</string>
     <string name="home_run_setup_again">Run Setup again</string>
     <string name="home_help_add_tv">Help add this TV</string>
     <!-- 0.4.6: opens the GitHub form with why the new home screen isn't on this TV filled in -->
     <string name="home_report">Report a problem</string>
+    <!-- 0.4.8: "This is your TV now", the TV's screenshot after a look went to it from this page -->
+    <string name="home_tv_now_title">This is your TV now</string>
+    <string name="home_tv_now_cd">What the TV shows now</string>
+    <string name="home_tv_now_again">Not right? Send it again</string>
+    <!-- 0.4.7 (UX finding 8): installed, not in use, after a failed switch or Use the TV's own home screen -->
+    <string name="home_installed_lead">The new home screen is installed but isn\'t in use. The TV\'s own home screen is in charge.</string>
+    <string name="home_installed_body">Try the switch again runs Setup once more and checks the home screen with you on the TV.</string>
+    <string name="home_installed_rows_note">Shows once the new home screen is in use.</string>
+    <string name="home_try_switch_again">Try the switch again</string>
+    <!-- 0.4.7 (PM 6): a decision Setup made on purpose is not a fault -->
+    <string name="home_by_design">This is by design, not a fault: Setup decided it from what the TV is. What would change it is above. If the TV changed since, Report a problem still reaches us.</string>
+    <string name="home_tv_list">See which TVs get the new home screen</string>
+    <!-- 0.4.7 (must 4): the report sent before (SentReports) -->
+    <string name="home_report_sent">You sent this TV\'s report on {date}. We\'ll post in your issue when there\'s news. You can send it again.</string>
     <string name="home_fire_tv_name" translatable="false">Fire TV</string>
     <!-- Under the Dock and Look rows (look2, spec 11.1): a send from the phone replaces what was
          changed with the TV's own Launcher settings (launcher 2.4 and later). -->
@@ -106,4 +120,13 @@
     <string name="dock_body">Up to {count, spellout} along the bottom. Drag an app by its dots to change the order.</string>
     <string name="dock_waiting">{count, plural, one {# app waits} other {# apps wait}} in the grid until you pick more apps in a row in Look.</string>
 
+    <!-- RFC-HELPER-1 (test build): the Home button helper's card (PLAN 4.6). -->
+    <string name="helper_card_title">Home button helper</string>
+    <string name="helper_card_on">The Home button opens the new home screen through a small helper. The TV\'s own stays on, so casting keeps working.</string>
+    <string name="helper_card_off_by_tv">The TV has switched the helper off (a restart or a cleaner app). Run Setup again to switch it back on.</string>
+    <string name="helper_card_no_redirect">The helper is on, but the look on the TV does not name the TV\'s home screen, so it does nothing. Switch it off, or run Setup again.</string>
+    <string name="helper_card_redirect_only">The new home screen is set up for the helper, but the helper is off. Run Setup again to switch it back on.</string>
+    <string name="helper_card_escape">On the TV: Settings &gt; Accessibility &gt; Home button switches it off too.</string>
+    <string name="helper_card_apps_only">Google TV keeps running in the background. Its Apps only mode quiets it, but it also switches Search and the Assistant off; you can switch it on in the TV\'s settings.</string>
+    <string name="helper_card_switch_off">Switch off</string>
 </resources>

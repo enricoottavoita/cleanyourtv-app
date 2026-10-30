@@ -136,6 +136,26 @@ class ProfilesTest {
         assertTrue(Quirk.HOME_TAKEOVER_SETUPWRAITH in kalley.quirks)
     }
 
+    // Issue #1378 (Skyworth SWTV-22AE-FHD, Android 14): after the clean-up the remote's custom (Daily)
+    // button did nothing, and the owner got it back by switching com.smartdevice.dailymanage,
+    // dailyshortcut and myapp on again. The upstream list switches all three off; the profile leaves
+    // those lines out and keeps them never-disable. The rest of the list is unchanged.
+    @Test fun theSkyworth22aeKeepsTheRemoteButtonPackages() {
+        val pr = profile("skyworth-swtv-22ae-fhd")
+        val inGroups = pr.groups.flatMap { g -> g.packages.map { it.name } }.toSet()
+        val keys = listOf("com.smartdevice.dailymanage", "com.smartdevice.dailyshortcut", "com.smartdevice.myapp").map(::p)
+        val meta = ProfileMeta.bundled.profiles.getValue("skyworth-swtv-22ae-fhd")
+        for (pkg in keys) {
+            assertTrue(pkg !in inGroups, "${pkg.value} is in a group")
+            assertTrue(pkg in pr.neverDisable, "${pkg.value} is not never-disable")
+            assertTrue(pkg.value in meta.leftOut && "#1378" in meta.leftOut.getValue(pkg.value), pkg.value)
+        }
+        val listed = DebloatTxt.scan(examples.first { it.folder == "skyworth-swtv-22ae-fhd" }.debloatTxt, "skyworth-swtv-22ae-fhd")
+            .groups.flatMap { g -> g.entries.map { it.pkg } }.toSet()
+        assertTrue(listed.containsAll(keys), "the upstream list still switches them off")
+        assertEquals(listed - keys.toSet() - KnownLaunchers.SETUPWRAITH, inGroups)
+    }
+
     @Test fun theReferenceTvProfile() {
         val mi = profile("xiaomi-mitv-axso0")
         assertEquals(listOf("MiTV-AXSO0"), mi.match.models)

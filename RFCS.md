@@ -109,6 +109,29 @@ without a warning; no frozen type changes.
   10,000 file fuzz with the 25 keys in valid and out of range values, the theme fixtures (retro
   and nature-calm included), the encoded docs and the TV choices; the 2.7 runs stay beside them.
 
+## RFC-THEME-1: the look reaches the launcher through its ThemeProvider
+
+Issues #1279, #1649, #1094 and #1290: Android 11 firmware of Xiaomi and TCL refuses the shell's sync
+push into `/sdcard/Android/data/com.gathin.tvhome/files` ("PushAsset config.json: nonzero_exit(1)"),
+and on Android 14 the push succeeds but the file is the shell's, so the launcher cannot open it and
+ignores the look. Launcher 2.5 (versionCode 6) and later export `ThemeProvider` (authority
+`com.gathin.tvhome.theme`, guarded by `WRITE_SECURE_SETTINGS`), which upstream's `tools/theme.sh`
+uses. Smallest change: frozen signatures grow, nothing is removed. `:core:model` gets `FileRoute`
+(SYNC, THEME_PROVIDER), a defaulted `route` on `Op.PushAsset` and `Op.RemoveFile`, and
+`ProbeKind.LAUNCHER_FILE_SHA256` (takes a Path). `ConfigTransport.writePlanSteps` and
+`resetPlanSteps` take a defaulted `route`. With THEME_PROVIDER the renderer stages the file in TMP
+(the push now runs before an op's lines; no earlier op has both, so no earlier plan hash changes),
+writes it with a fixed template (`content write`, a copy from the staged file as the fallback when
+the content tool answers anything, the staged file removed) and checks it with a second template
+(`content read | sha256sum`), so the check is the launcher's view; a removal is one quoted
+`content delete` line. Both templates take one value from a two-entry list (`config.json`,
+`wallpaper.jpg`) and have golden files. The planner picks THEME_PROVIDER on Android 10 and later
+(`content write` exists from 10) when the launcher the look reaches has the provider (versionCode 6
+and up, or not read, the LookGates rule); Android 8 and 9 and older launchers keep SYNC. Journals,
+plan files and changes.json write `route` only when it is not SYNC, so every earlier file reads and
+writes the same. Failure policies are unchanged; Setup's look send still CONTINUEs, but Done now has
+a line for a refused look and the log and the report name the send and the TV's answer.
+
 ## RFC-RECONNECT-1: a saved TV is found again at a new address
 
 Issue #1578: on a mesh Wi-Fi the TV moved from .111 to .104, the app tried only the saved address
@@ -118,8 +141,58 @@ the app's signature only (`AdbConnection.open(sendPublicKey = false)` stops with
 where the TV does not take the signature, before the public key that raises the Allow dialog),
 then the TvId check as `open` does (`Policy.WrongTv`). `TvAccess.session` polls the saved
 addresses as before and, after one round, searches the network beside the polling with the
-Discovery that "Add a TV" uses (8 s a search, again every 30 s while the debugging step waits);
+Discovery that "Add a TV" uses (15 s a search, NSD resolves one service at a time, again every 30 s while the debugging step waits);
 each TV found elsewhere with port 5555 open gets `openKnown`, so a different TV is never connected
 and a TV that never allowed this phone sees no dialog. The TV that answers is saved at its new
 address (its plain TCP endpoints replaced). Setup's connect gives no identity check to a TV whose
 TvId is saved on this phone and that took its key without asking. No other interface changes.
+
+## RFC-HELPER-1: the Home button helper, a test build opt-in
+
+Test build only (0.4.8 track, -Pcyt.homeHelper=true; the release bundles no marker, so its planner
+refuses the helper and no screen offers it). The owner accepted an opt-in accessibility helper on
+2026-10-28; the design is research/remote-buttons/PLAN.md sections 4.3 to 4.9. The TV keeps its own
+home screen and its setup wizard; the launcher's HomeKeyService, with stock_home_redirect naming
+that home screen and key_filter false, opens the new home screen whenever the TV's own comes up.
+Frozen signatures grow, nothing is removed:
+
+- `Op` (5.2) gets `AccessibilityAdd(expected, component)`, `AccessibilityRemove(expected,
+  component, offIfEmpty)` and `ArmHelperWatchdog(component, seconds, token, offIfEmpty)`. Each
+  renders one `HelperLines` template (core/ops): a TV-side compare-and-set of
+  enabled_accessibility_services for the add and the planner's removal, a sed removal of that one
+  entry for Undo's inverse and the laptop scripts, and a safety timer that does the same removal
+  unless the phone defuses it. The renderer takes `com.gathin.tvhome/.HomeKeyService` and nothing
+  else, never a list of more than 16, and none of them writes accessibility_enabled 1.
+- `Choices` gets `homeHelper` (default false); `PlanKind` gets `HOME_HELPER_OFF` and `PlanRequest`
+  `HomeHelperOff`. `DefaultPlanner` takes `homeHelper` (default `HomeHelper.BUILD_ON`), last.
+- `UndoOrder` gets `Target.Helper` and `Phase.HELPER`, between package states and settings.
+- The engine runs the helper's guarded section (`SECTION_HELPER`) with its own step R vocabulary
+  (our entry out, accessibility_enabled 0, the timer defused, Home), looks twice at a focus on the
+  TV's own home screen before it rolls back, and checks the helper's priors for staleness.
+
+Not done, by decision: TCL's AUTO_START app-op, button mapping (app_keys), a probe of
+`dumpsys accessibility` (the snapshot's two settings and the overlay give Manage's states).
+
+## RFC-REACH-1: the network is a hint, not a gate; the debugging step says which case it is
+
+A user on 0.4.6.1 waited for good at "Waiting for the TV..." with USB debugging on and the phone on
+Wi-Fi. D19 detects a different network by link subnet, and `TvAccess` used that as a gate: when the
+phone's subnet was not the TV's `lastSubnet` (a new or reset router, a mesh node or band on another
+subnet, a guest network) the step showed `WrongNetwork` and neither probed the saved addresses nor
+searched the network (RFC-RECONNECT-1), and `quiet()` gave up the same way. The TvId check (D37:
+`open` and `openKnown` with the expected TvId) is what keeps a different TV out, so the gate bought
+no safety. Change: on any Wi-Fi the saved addresses are probed and the network searched; only a
+phone that is not on Wi-Fi is `WrongNetwork`; a TV reached on a new network saves it as
+`lastSubnet`. The subnet stays a D19 hint, shown to the person. Additive, no frozen signature
+changes: `TvAccess.check` (a `StateFlow<ReachCheck>`, the live "What the app sees" rows, `Seen`
+per row) and `TvAccess.lastHandshake(tvId)`; one log line per change of state (fixed words and
+counts, never an address or a subnet). The sheet (`DebugStepSheet`, now in `ReachSheet.kt`) has its
+own copy for not on Wi-Fi, the Allow prompt and debugging off, "Show details" with the rows, a hint
+after 30 s with nothing found, "Report a problem" (`ReportContext` case `REACH_<STATE>`) and "Copy
+connection details". That block (`ConnectionDetails`, made when asked for, also from App settings)
+has the phone's network kinds (`PhoneNetwork`, read by the app from ConnectivityManager with
+ACCESS_NETWORK_STATE only), each saved TV's addresses cut to their last part with port 5555 and the
+known-TV handshake, a fresh 10 s search, the last 40 "access:" lines and the step's state. It keeps
+RFC-RECONNECT-1's rules: `openKnown` only, so no Allow dialog on any TV, and it saves nothing.
+`ManageDeps` gets `phoneNetwork` (with a default). Not done: "Enter the TV's address" on the sheet,
+as the address entry lives in Setup's machine (S1c) and is not reachable from a returning write.

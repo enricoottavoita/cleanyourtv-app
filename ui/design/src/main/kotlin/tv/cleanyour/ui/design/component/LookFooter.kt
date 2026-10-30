@@ -12,7 +12,8 @@ import tv.cleanyour.core.flows.LookEdit
 import tv.cleanyour.core.flows.WayBack
 import tv.cleanyour.ui.design.R
 
-// The Look sheet's pinned footer (W3, W8): "Put it on the TV", the one guarded write of every page
+// The Look sheet's pinned footer (W3, W8): "Put it on the TV", the one guarded write of every page, only while the
+// choice would change something (0.4.8)
 // (a tap through another app's overlay is dropped, R4-W8), then at most one way back under it:
 // "Undo changes" while the choice differs from what was sent, otherwise "Put back the earlier look"
 // when there is one. Then, on the Look page and only after the TV's own settings were seen
@@ -25,7 +26,9 @@ fun ColumnScope.LookSendFooter(
     onPut: () -> Unit,
     onEdit: (LookEdit) -> Unit,
 ) {
-    PrimaryButton(stringResource(R.string.cyt_look_use), onPut, guardObscured = true)
+    // 0.4.8 (beta1 QA): with nothing changed there is nothing to send; one line says the TV has it.
+    if (state.canSend) PrimaryButton(stringResource(R.string.cyt_look_use), onPut, guardObscured = true)
+    else LookBody(stringResource(R.string.cyt_look_on_tv), Modifier.align(Alignment.CenterHorizontally).padding(top = 4.dp, bottom = 4.dp))
     when (state.wayBack) {
         WayBack.UNDO -> TertiaryButton(stringResource(R.string.cyt_look_undo_changes), { onEdit(LookEdit.UndoChanges) },
             Modifier.align(Alignment.CenterHorizontally), plain = true)

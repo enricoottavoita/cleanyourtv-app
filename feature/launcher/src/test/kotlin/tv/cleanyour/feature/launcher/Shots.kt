@@ -212,6 +212,8 @@ object LookFixtures {
         reads27: Boolean = true, ramMb: Int? = 2048, wayBack: WayBack = WayBack.NONE, changed: Boolean = false, newPhoto: Boolean = false,
         note: LookNote? = null, keyNames: Boolean = false, tvChanged: Boolean = false, movementPicked: Boolean = false, resettable: Int = 0,
         previews: Boolean = true, reads30: Boolean = false, extras: LookExtras = LookExtras.DEFAULT,
+        // 0.4.8: the sheet offers "Put it on the TV" (LookDraft.canSend); false is a draft the TV already has.
+        canSend: Boolean = true,
     ): LookDraft {
         val e = if (reads30) extras else LookExtras.DEFAULT
         val ch = choice(style, picture, columns, details, names, movement, lift, dock, e)
@@ -230,7 +232,7 @@ object LookFixtures {
             rows = rows(style, details, picture, reads27, ramMb, movement, lift, names, resettable), changed = changed, newPhoto = newPhoto,
             wayBack = wayBack, note = note, styles = if (reads27) StyleId.entries else listOf(StyleId.CLASSIC), reads27 = reads27, ramMb = ramMb,
             keyNames = keyNames, settingsFile = settings, fullFile = full, apps = dock.size + waiting, waiting = waiting, tvChanged = tvChanged,
-            reads30 = reads30, extras = e,
+            reads30 = reads30, extras = e, unsent = canSend && !changed && !newPhoto && !tvChanged,
             actingExtras = if (reads30) acting(style, rows(style, details), e) else LookExtras.DEFAULT,
             offeredExtras = if (reads30) acting(style, rows(style, details), ALL_ON) else LookExtras.DEFAULT,
         )

@@ -37,6 +37,19 @@ class HomePrefsTest {
         }
     }
 
+    // 0.4.7: a dock the app picked is the one "dockchosen=false" line; a file without it (every file
+    // before 0.4.7, and a dock the person set) loads as chosen, so its pushes keep fill_dock false.
+    @Test fun aPickedDockIsOneLineAndOlderFilesLoadAsChosen() = runTest {
+        assertEquals(true, load("dock=com.netflix.ninja\nstyle=classic\n")?.dockChosen)
+        assertEquals(false, load("dock=com.netflix.ninja\nstyle=classic\ndockchosen=false\n")?.dockChosen)
+        val docs = MemoryDocumentStore()
+        HomePrefs(docs).save(id, HomeChoice(dock, null, dockChosen = false))
+        assertEquals("dock=com.netflix.ninja,com.google.android.youtube.tv\ntheme=\ndockchosen=false\n", docs.read("tvs/${id.value}/home.txt") { it.decodeToString() })
+        HomePrefs(docs).save(id, HomeChoice(dock, null))
+        assertEquals("dock=com.netflix.ninja,com.google.android.youtube.tv\ntheme=\n", docs.read("tvs/${id.value}/home.txt") { it.decodeToString() })
+        assertEquals(false, HomeChoice(dock, "mist", dockChosen = false).withTheme("aurora").dockChosen, "a new look keeps who made the dock")
+    }
+
     @Test fun aLook2ChoiceRoundTrips() = runTest {
         val docs = MemoryDocumentStore()
         val prefs = HomePrefs(docs)

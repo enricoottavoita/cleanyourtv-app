@@ -126,7 +126,9 @@ class ProtectedTest {
         for (name in listOf("com.smartdevice.setupwraith", "com.oneplus.oobe.tv", "com.xiaomi.setupwizard", "com.android.managedprovisioning",
             "com.haier.launcher.haiermatrix", "com.oneplus.tv.launcher", "com.google.android.marvin.talkback", "com.google.android.tts",
             "com.sony.dtv.accessibility.tutorial", "com.tcl.hearaid", "com.google.android.tv.remote.service", "com.google.android.tv.remotecontrol.logging",
-            "com.sony.dtv.seeds.iot.remotestart", "com.heytap.tv.remotediagnosing", "mitv.service", "com.tcl.channelplus")) {
+            "com.sony.dtv.seeds.iot.remotestart", "com.heytap.tv.remotediagnosing", "mitv.service", "com.tcl.channelplus",
+            // Issue #1378: the Skyworth platform's remote key service and quick menu.
+            "com.smartdevice.global.service", "com.smartdevice.dailyshortcut")) {
             assertNotNull(Protected.isProtected(PackageName(name), state(), takeover), name)
             assertNotNull(Denylist.staticReason(name), name)
         }

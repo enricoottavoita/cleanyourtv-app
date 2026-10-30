@@ -4,6 +4,7 @@ import tv.cleanyour.core.model.BlobRef
 import tv.cleanyour.core.model.Component
 import tv.cleanyour.core.model.CurtainGroup
 import tv.cleanyour.core.model.CurtainStage
+import tv.cleanyour.core.model.FileRoute
 import tv.cleanyour.core.model.InstallFlag
 import tv.cleanyour.core.model.Op
 import tv.cleanyour.core.model.PackageName
@@ -47,6 +48,8 @@ class RendererPropertyTest {
     private fun token() = RunToken(buildString { repeat(16) { append("0123456789abcdef"[rnd.nextInt(16)]) } })
     private fun fileName() = (lower + "0123456789")[rnd.nextInt(36)] + buildString { repeat(rnd.nextInt(0, 20)) { append((alnum + "._-")[rnd.nextInt(alnum.length + 3)]) } }
     private fun path(dir: RemoteDir = RemoteDir.entries[rnd.nextInt(3)]) = RemotePath(dir, (1..rnd.nextInt(1, 4)).map { fileName() }.let { if (it.any { s -> s.contains("..") }) listOf("x") else it })
+    // RFC-THEME-1: the two files the launcher's provider takes from this app.
+    private fun themeFile() = RemotePath(RemoteDir.OVERLAY, listOf(ThemeProviderLines.FILES.toList()[rnd.nextInt(ThemeProviderLines.FILES.size)]))
     private fun blob(size: Long = rnd.nextLong(1, 200L * 1024 * 1024)) = sha().let { BlobRef(it, size, "blobs/" + it.hex) }
     private fun componentList() = (1..rnd.nextInt(1, 4)).joinToString(":") { comp().flat }
     private fun deviceName() = buildString { repeat(rnd.nextInt(1, 33)) { append((alnum + " ._-")[rnd.nextInt(alnum.length + 4)]) } }.trim().ifEmpty { "TV" }
@@ -67,6 +70,7 @@ class RendererPropertyTest {
         val arg = when (kind) {
             ProbeKind.SETTINGS -> ReadArg.Ns(SettingsNs.entries[rnd.nextInt(3)])
             ProbeKind.SHA256_OF_FILE -> ReadArg.Path(path())
+            ProbeKind.LAUNCHER_FILE_SHA256 -> ReadArg.Path(themeFile())
             ProbeKind.SHA256_OF_INSTALLED, ProbeKind.PACKAGE_DUMP -> ReadArg.Pkg(pkg())
             ProbeKind.WATCHDOG_ALIVE -> ReadArg.Token(token())
             else -> null
@@ -78,7 +82,18 @@ class RendererPropertyTest {
     private fun cue() = Op.CurtainCue(curtain, token(), CurtainStage.entries[rnd.nextInt(CurtainStage.entries.size)], rnd.nextInt(0, 1000), rnd.nextInt(0, 1000),
         CurtainGroup.entries[rnd.nextInt(CurtainGroup.entries.size)], rnd.nextInt(0, 1000), rnd.nextInt(0, 1000))
 
-    private fun anyOp(): Op = when (rnd.nextInt(23)) {
+    // RFC-HELPER-1: the helper's three ops, with lists that do and do not name it.
+    private val service = HelperLines.SERVICE
+    private fun listWithout(): String? = if (rnd.nextInt(3) == 0) null else componentList()
+    private fun listWith(): String = (HelperLines.entries(listWithout()) + service.flat).shuffled(rnd).joinToString(":")
+    private fun helperOp(): Op = when (rnd.nextInt(4)) {
+        0 -> Op.AccessibilityAdd(listWithout(), service)
+        1 -> Op.AccessibilityRemove(listWith(), service)
+        2 -> Op.AccessibilityRemove(null, service, rnd.nextBoolean())
+        else -> Op.ArmHelperWatchdog(service, rnd.nextInt(30, 301), token(), rnd.nextBoolean())
+    }
+
+    private fun anyOp(): Op = when (rnd.nextInt(24)) {
         0 -> Op.Disable(pkg())
         1 -> Op.Enable(pkg())
         2 -> Op.DefaultState(pkg())
@@ -93,14 +108,15 @@ class RendererPropertyTest {
         11 -> Op.KillWatchdog(token())
         12 -> Op.PressHome
         13 -> Op.Mkdir(RemoteDir.entries[rnd.nextInt(3)])
-        14 -> blob().let { Op.PushAsset(it, path(), it.sha256) }
-        15 -> Op.RemoveFile(path())
+        14 -> blob().let { if (rnd.nextBoolean()) Op.PushAsset(it, path(), it.sha256) else Op.PushAsset(it, themeFile(), it.sha256, FileRoute.THEME_PROVIDER) }
+        15 -> if (rnd.nextBoolean()) Op.RemoveFile(path()) else Op.RemoveFile(themeFile(), FileRoute.THEME_PROVIDER)
         16 -> Op.RestartHome(comp())
         17 -> Op.StartActivity(comp(), rnd.nextBoolean())
         18 -> read()
         19 -> Op.Settle(rnd.nextInt(1, 61))
         20 -> Op.Reboot
         21 -> cue()
+        22 -> helperOp()
         else -> Op.DebugOff
     }
 
@@ -118,6 +134,23 @@ class RendererPropertyTest {
                 assertTrue(Watchdog.matches(WatchdogVariant.NOHUP_SETSID, r.lines[1].text, op.stock, op.seconds, op.token))
                 return@repeat
             }
+            // RFC-THEME-1: the provider's write is its template filled with the file, after the push to its staging file.
+            if (op is Op.PushAsset && op.route == FileRoute.THEME_PROVIDER) {
+                assertTrue(ThemeProviderLines.matchesWrite(r.lines.single().text, op.dest), r.lines.single().text)
+                assertEquals(Transfer.Push(op.src, ThemeProviderLines.stage(op.dest), 0x1A4), r.transfer)
+                assertTrue(ThemeProviderLines.matchesRead(renderer.render(r.verify!!).lines.single().text, op.dest))
+                return@repeat
+            }
+            if (op is Op.Read && op.kind == ProbeKind.LAUNCHER_FILE_SHA256) {
+                assertTrue(ThemeProviderLines.matchesRead(r.lines.single().text, (op.arg as ReadArg.Path).path), r.lines.single().text)
+                return@repeat
+            }
+            // RFC-HELPER-1: one HelperLines template each (the timer after its token file removal).
+            if (op is Op.AccessibilityAdd || op is Op.AccessibilityRemove || op is Op.ArmHelperWatchdog) {
+                r.lines.forEach { assertTrue(ShellTokens.LINE_RE.matches(it.text), it.text) }
+                assertTrue(helperLineIsItsTemplate(op, r.lines.last().text), r.lines.last().text)
+                return@repeat
+            }
             for (line in r.lines) {
                 lines++
                 val text = line.text
@@ -133,7 +166,7 @@ class RendererPropertyTest {
             }
             if (op is Op.Settle) assertTrue(r.lines.isEmpty() && r.transfer == null)
             if (op is Op.PushAsset || op is Op.InstallStream) assertTrue(r.lines.isEmpty() && r.transfer != null)
-            r.verify?.let { v -> renderer.render(v).lines.forEach { ShellTokens.assertLine(it.text) } }
+            r.verify?.takeUnless { it.kind == ProbeKind.LAUNCHER_FILE_SHA256 }?.let { v -> renderer.render(v).lines.forEach { ShellTokens.assertLine(it.text) } }
         }
         assertTrue(lines > 3500)
     }
@@ -142,7 +175,8 @@ class RendererPropertyTest {
     // (GuardRevival needs `cmd notification allow_listener`), never grants it WRITE_SECURE_SETTINGS
     // (`pm grant`, which also guards GuardConfig) and never broadcasts to it; its only accessibility
     // writes are SettingsPut of the two accessibility settings with the op's own value, which the
-    // planner uses only to put back the list the TV had (restoreAccessibility, Launcher24PlanTest).
+    // planner uses only to put back the list the TV had (restoreAccessibility, Launcher24PlanTest),
+    // and, since RFC-HELPER-1 (test build), the Home button helper's templates for HomeKeyService alone.
     // Pinned for every op kind, random ones and ones aimed at the launcher's 3.0 components.
     @Test fun noOpApprovesGrantsOrSwitchesOnTheLaunchersHelpers() {
         val tvhome = PackageName("com.gathin.tvhome")
@@ -161,8 +195,21 @@ class RendererPropertyTest {
             val r = try { renderer.render(op) } catch (e: RenderRefused) { continue }
             val rendered = r.lines + listOfNotNull(r.verify).flatMap { renderer.render(it).lines }
             for (line in rendered) {
+                // RFC-THEME-1: the provider's two templates name only content, rm, cp, sha256sum, the file and its uri.
+                if (ThemeProviderLines.FILES.any { f -> RemotePath(RemoteDir.OVERLAY, listOf(f)).let { ThemeProviderLines.matchesWrite(line.text, it) || ThemeProviderLines.matchesRead(line.text, it) } }) {
+                    assertTrue(forbidden.none { it in line.text } && "WRITE_SECURE_SETTINGS" !in line.text && "accessibility" !in line.text, line.text)
+                    continue
+                }
                 if (op is Op.ArmHomeWatchdog && line.text == renderer.render(op).lines.last().text) {
                     assertTrue(forbidden.none { it in line.text } && "WRITE_SECURE_SETTINGS" !in line.text, line.text)
+                    continue
+                }
+                // RFC-HELPER-1: the only lines that write the list outside SettingsPut are the helper's
+                // templates, for our HomeKeyService alone, and none of them switches accessibility on.
+                if ((op is Op.AccessibilityAdd || op is Op.AccessibilityRemove || op is Op.ArmHelperWatchdog) && line.text == renderer.render(op).lines.last().text) {
+                    assertTrue(forbidden.none { it in line.text } && "WRITE_SECURE_SETTINGS" !in line.text, line.text)
+                    assertTrue(helperLineIsItsTemplate(op, line.text), line.text)
+                    assertTrue("accessibility_enabled 1" !in line.text && "accessibility_enabled '1'" !in line.text, line.text)
                     continue
                 }
                 val argv = ShellTokens.tokenize(line.text)
@@ -179,6 +226,13 @@ class RendererPropertyTest {
                 }
             }
         }
+    }
+
+    private fun helperLineIsItsTemplate(op: Op, line: String): Boolean = when (op) {
+        is Op.AccessibilityAdd -> op.component == service && HelperLines.matchesAdd(line, op.expected, op.component)
+        is Op.AccessibilityRemove -> op.component == service && line == (op.expected?.let { HelperLines.casRemove(it, op.component) } ?: HelperLines.tvRemove(op.component, op.offIfEmpty))
+        is Op.ArmHelperWatchdog -> op.component == service && HelperLines.matchesWatchdog(line, WatchdogVariant.NOHUP_SETSID, op.component, op.seconds, op.token, op.offIfEmpty)
+        else -> false
     }
 
     // RFC-CURTAIN-1: every cue is one fixed argv: constant words, the token, two enum names and four
@@ -225,6 +279,8 @@ class RendererPropertyTest {
             )
             val inverse = renderer.inverse(op, prior) ?: return@repeat
             val r = renderer.render(inverse)
+            // RFC-HELPER-1: the add's inverse is the helper's TV-side removal template.
+            if (inverse is Op.AccessibilityRemove) { assertTrue(helperLineIsItsTemplate(inverse, r.lines.single().text)); return@repeat }
             r.lines.forEach { ShellTokens.assertLine(it.text) }
         }
     }
@@ -266,6 +322,13 @@ class RendererPropertyTest {
             Op.Read(ProbeKind.PACKAGE_DUMP, ReadArg.Ns(SettingsNs.SECURE)),
             Op.Read(ProbeKind.WATCHDOG_ALIVE, ReadArg.Pkg(launcher.pkg)),
             Op.Read(ProbeKind.WATCHDOG_ALIVE),
+            // RFC-THEME-1: the launcher's provider takes only config.json and wallpaper.jpg in its folder.
+            Op.PushAsset(BlobRef(Sha256("a".repeat(64)), 10, "p"), RemotePath(RemoteDir.TMP, listOf("config.json")), Sha256("a".repeat(64)), FileRoute.THEME_PROVIDER),
+            Op.PushAsset(BlobRef(Sha256("a".repeat(64)), 10, "p"), RemotePath(RemoteDir.OVERLAY, listOf("theme_revision")), Sha256("a".repeat(64)), FileRoute.THEME_PROVIDER),
+            Op.PushAsset(BlobRef(Sha256("a".repeat(64)), 10, "p"), RemotePath(RemoteDir.OVERLAY, listOf("wallpapers", "a.jpg")), Sha256("a".repeat(64)), FileRoute.THEME_PROVIDER),
+            Op.RemoveFile(RemotePath(RemoteDir.RESTORE, listOf("wallpaper.jpg")), FileRoute.THEME_PROVIDER),
+            Op.Read(ProbeKind.LAUNCHER_FILE_SHA256, ReadArg.Path(RemotePath(RemoteDir.OVERLAY, listOf("order.txt")))),
+            Op.Read(ProbeKind.LAUNCHER_FILE_SHA256),
             Op.Disable(PackageName("com.android.systemui")),
             Op.Disable(PackageName("com.android.providers.media.module")),
             Op.Disable(PackageName("com.android.wifi.resources")),

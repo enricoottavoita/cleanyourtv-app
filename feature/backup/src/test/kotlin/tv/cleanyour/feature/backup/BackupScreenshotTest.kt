@@ -21,7 +21,7 @@ import tv.cleanyour.testing.fixtures.Samples
 private const val NOW = Samples.NOW_MS
 
 private fun restore(phase: RestorePhase = RestorePhase.Idle, baseline: Long? = NOW, googleTv: Boolean = false, exporting: Boolean = false) =
-    RestorePointState(tvName = "Mi TV 4A", baselineAtMs = baseline, latestAtMs = baseline, googleTv = googleTv, phase = phase, exporting = exporting)
+    RestorePointState(tvName = "Mi TV 4A", baselineAtMs = baseline, latestAtMs = baseline, wizardOff = googleTv, phase = phase, exporting = exporting)
 
 private val undoLines = listOf("Restore point read", "Turning things back on: 14 of 23...")
 private val preview = UndoPreview(Samples.plan(emptyList()), thingsBack = 23, stockName = "PatchWall", wizardBack = true, removeLauncher = false)
@@ -44,6 +44,10 @@ object BackupShots {
         Shot("restore_previewing") { SheetOver({ RestoreScreen(restore(), {}, {}) }) { PreviewLoadingContent() } },
         Shot("restore_preview_keep") { SheetOver({ RestoreScreen(restore(), {}, {}) }) { PreviewContent(preview, BASELINE) {} } },
         Shot("restore_preview_remove") { SheetOver({ RestoreScreen(restore(), {}, {}) }) { PreviewContent(preview.copy(removeLauncher = true, stockName = null, wizardBack = false), BASELINE) {} } },
+        // UX finding 17: the new home screen was never installed (the TV keeps its own): no choice about it.
+        // RFC-HELPER-1 (test build): the Home button helper is on, so Undo everything switches it off.
+        Shot("restore_preview_helper") { SheetOver({ RestoreScreen(restore(), {}, {}) }) { PreviewContent(preview.copy(stockName = null, wizardBack = false, helperOff = true), BASELINE) {} } },
+        Shot("restore_preview_not_installed") { SheetOver({ RestoreScreen(restore(), {}, {}) }) { PreviewContent(preview.copy(stockName = null, wizardBack = false, launcherInstalled = false), BASELINE) {} } },
         Shot("restore_confirm") { SheetOver({ RestoreScreen(restore(), {}, {}) }) { ConfirmContent {} } },
         Shot("restore_factory_sheet") { SheetOver({ RestoreScreen(restore(googleTv = true), {}, {}) }) { FactoryContent({}, {}) } },
     )

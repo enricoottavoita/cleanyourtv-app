@@ -384,6 +384,12 @@ internal object ConfigCodecImpl {
         val keyFilter = on("key_filter", true)
         if (set("consume_volume_keys", true) && !keyFilter) w += "consume_volume_keys does nothing with key_filter false: the key helpers do not see the volume keys"
         if (set("home_long_press_home", true) && !keyFilter) w += "home_long_press_home does nothing with key_filter false: the key helper does not see the Home key"
+        // RFC-HELPER-1: the Home button helper's redirect names a Google TV home screen (the only ones
+        // this app sets), and buttons mapped with key_filter false never reach the helper.
+        val redirect = o[HomeHelperKeys.REDIRECT] as? AValue.Str
+        if (redirect != null && redirect.v.javaTrim().let { v -> v.isNotEmpty() && KnownLaunchers.generic.none { it.pkg.value == v } })
+            w += "stock_home_redirect is not one of Google's TV home screens: the Home button helper would send another app's screen on to the new home screen"
+        if (!keyFilter && (o["app_keys"] as? AValue.Arr)?.items?.isNotEmpty() == true) w += "app_keys does nothing with key_filter false: the key helpers do not see the buttons"
         // Config.integer(json, "lunar_utc_offset", -1, -1, 14): -1 (the locale's own) unless a number in range.
         val offset = when (val v = o["lunar_utc_offset"]) {
             is AValue.IntV -> v.v

@@ -1,5 +1,7 @@
 package tv.cleanyour.core.flows
 
+import tv.cleanyour.core.planner.HomeHelper
+import tv.cleanyour.core.spec.HomeHelperKeys
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.awaitCancellation
@@ -72,6 +74,7 @@ import tv.cleanyour.core.session.TvSession
 import tv.cleanyour.core.spec.AppNames
 import tv.cleanyour.core.spec.DockLayers
 import tv.cleanyour.core.spec.FactsTable
+import tv.cleanyour.core.spec.LiveTvKeys
 import tv.cleanyour.core.spec.Looks
 import tv.cleanyour.core.spec.PictureSource
 import tv.cleanyour.core.spec.ProfileResolution
@@ -154,7 +157,21 @@ data class SetupExtras(
     val doneKept: List<String> = emptyList(),    // RF-LAUNCHER-250 F1: switch-offs kept because they run the TV's inputs
     val doneNothing: Boolean = false,            // 0.3.3 (issue #15): the run changed nothing on the TV, so Done says so
     val doneNothingWhy: NothingWhy = NothingWhy.NOTHING_PLANNED,   // which "nothing was changed" body Done shows
-    val doneHomeKept: HomeOutcome? = null,       // QA of 0.4.5: the switch was tried and the old home screen is back, why (Done's line)
+    val doneHomeKept: HomeOutcome? = null,       // QA of 0.4.5: the switch was tried and the TV's own home screen is back, why (Done's line)
+    // 0.4.7 (UX finding 18, issues #1279, #1649): the look (config.json or the picture, by a sync push or
+    // the launcher's ThemeProvider) did not reach the TV while the new home screen took over (the
+    // look's steps CONTINUE); Done says so and the choice is saved for the Look sheet.
+    val doneLookFailed: Boolean = false,
+    // 0.4.7 (HomeKept): the TV's brand as its facts say it, for the TV_REFUSES reason; which rows of
+    // the plan are the TV's own home screen or its setup wizard (the Customise sheet's words for
+    // them); PatchWall when it is on the TV, and whether keeping it on would keep the TV's own home
+    // screen too (its feeds are off, not by this app), for the Customise snackbar.
+    val brand: String = "",
+    val homeRoles: Map<PackageName, HomeRole> = emptyMap(),
+    val patchWall: PackageName? = null,
+    val patchWallHoldsHome: Boolean = false,
+    // 0.4.7: this TV's report was sent before (SentReports), for the careful mode line on S3.
+    val reportSentAtMs: Long? = null,
     val restorePointPushed: Boolean = false,     // D44
     val dock: List<AppChoice> = emptyList(),     // D4 row and the dock sheet (S3b): the dock, then Row 2 and Row 3
     val apps: List<AppChoice> = emptyList(),     // installed apps for the dock sheet
@@ -175,7 +192,19 @@ data class SetupExtras(
     val newPicture: BlobRef? = null,
     val newDim: Int = OwnPicture.DEFAULT_DIM,
     val waiting: Int = 0,
-)
+    // RFC-HELPER-1 (test build): Customise offers "Home button helper" on this TV (HomeHelper's rules
+    // hold, the TV's own home screen is Google's), and the plan on screen uses it instead of the switch.
+    val helperOffer: Boolean = false,
+    val helperOn: Boolean = false,
+    // 0.4.8 (Restarts): what this phone counted for the TV, and what the Done restart check's read said (HELD, FAILED,
+    // or null before it); and (PLAN item 3) the TV's screenshot after Setup sent the look, "This is your TV now".
+    val restarts: RestartTally? = null,
+    val restartRead: RestartRead? = null,
+    val doneShot: ByteArray? = null,
+) {
+    // 0.4.7: the one state every screen reads when the TV keeps its own home screen (HomeKept).
+    val homeKept: HomeKept? get() = HomeKept.of(this)
+}
 
 class SetupDeps(
     val discovery: Discovery,
@@ -234,6 +263,12 @@ class SetupDeps(
     // Issue #629: what the home check saw in front when it last rolled back on this TV (the engine's
     // onWrongFocus), taken once; null when the app does not know.
     val wrongFocus: (TvId) -> Component? = { null },
+    // 0.4.7: whether this TV's report was sent before (SentReports), for S3's careful mode line.
+    val sentReports: SentReports? = null,
+    // RFC-HELPER-1: whether this build offers the Home button helper (the test build's bundled switch).
+    val homeHelper: Boolean = tv.cleanyour.core.planner.HomeHelper.BUILD_ON,
+    // 0.4.8: where the restarts are counted (Restarts); the app gives Manage the same one. Null counts none.
+    val restarts: Restarts? = documents?.let { Restarts(it) },
 )
 
 // The first-run wizard, screens S1 to S5 (PRODUCT-SPEC 4, UX 2 and 4). One machine per wizard run,
@@ -506,6 +541,7 @@ class SetupMachine(
             }
             is SetupIntent.KeepDebuggingOn -> editDraft { it.copy(keepDebuggingOn = event.on) }
             is SetupIntent.ShowOnTv -> editDraft { it.copy(curtain = event.on) }
+            is SetupIntent.HomeHelper -> if (deps.homeHelper) editDraft { it.copy(homeHelper = event.on) }
             SetupIntent.MakeItClean -> if (after is SetupState.Found && !mutableExtras.value.starting) {
                 mutableExtras.update { it.copy(starting = true) }
                 scope.launch {
@@ -525,9 +561,18 @@ class SetupMachine(
             SetupIntent.CarryOn -> scope.launch { carryOn() }
             SetupIntent.UndoWhatWeDid -> scope.launch { undoWhatWeDid() }
             SetupIntent.Restart -> if (after is SetupState.Done && restartJob?.isActive != true) restartJob = scope.launch { restart(after) }
+            SetupIntent.TellUsItWorked -> if (after is SetupState.Done && (mutableExtras.value.restarts?.held ?: 0) > 0) effect(SetupEffect.Navigate("report/confirm/${after.tvId.value}"))
+            is SetupIntent.ReportRestartFailed -> if (after is SetupState.Done && mutableExtras.value.restartRead == RestartRead.FAILED) {
+                val ctx = ReportContext("Setup", ReportContext.named(event.title, tv?.nickname, knownTv?.nickname), ItWorked.RESTART_FAILED)
+                effect(SetupEffect.Navigate(IssueRoute.of(after.tvId, ctx)))
+            }
+            SetupIntent.SendLookAgain -> if (after is SetupState.Done && mutableExtras.value.doneShot != null) effect(SetupEffect.Navigate("home/${after.tvId.value}/again"))
             SetupIntent.SaveRestoreNote -> scope.launch { restoreNote() }
             SetupIntent.AddCard -> if (deps.store.addOns) tvIdOf(after)?.let { effect(SetupEffect.Navigate("modules/${it.value}")) }
             SetupIntent.Finish -> if (after is SetupState.Done && mutableExtras.value.finishing == null) scope.launch { finish(after.tvId) }
+            // 0.4.7 (UX finding 5, PM 7): "Done" on a plan with nothing to switch off and the TV's
+            // own home screen kept: no credential prompt, no empty run; the draft ends here.
+            SetupIntent.LeaveAsIs -> if (after is SetupState.Found && !mutableExtras.value.starting && mutableExtras.value.finishing == null) scope.launch { leaveAsIs(after.tvId) }
             is Ev.Run -> onRun(before, event)
             is SetupIntent.StopAction -> onStopAction(after, event.action)
             else -> {}
@@ -781,7 +826,7 @@ class SetupMachine(
             dock = null, themeId = lookId, keepDebuggingOn = false, planId = null, updatedAtMs = now,
             columns = drafts.override(lookId, saved?.takeUnless { it.isNew }?.columns),
             picture = saved?.takeUnless { it.isNew }?.picture?.takeUnless { Looks.dated(lookId) },
-            look = saved?.takeIf { it.isNew }?.let { HomePrefs.encode(it.copy(dock = emptyList(), cards = null)) })
+            look = saved?.takeIf { it.isNew }?.let { HomePrefs.encode(it.copy(dock = emptyList(), cards = null, dockChosen = true)) })
         val tv = Tv(
             id = s.tvId, nickname = name, room = existing?.room, facts = facts,
             endpoints = listOfNotNull(host).ifEmpty { existing?.endpoints.orEmpty() },
@@ -839,7 +884,8 @@ class SetupMachine(
             is ProfileResolution.None -> r.stockLaunchers
             null -> emptyList()
         }
-        val stockUnknown = !ours && StockHome.of(snap, stocks) == null
+        // Issue #2028: so is a TV whose Home answers to a home screen we do not know, ranked above ours.
+        val stockUnknown = !ours && (StockHome.of(snap, stocks) == null || StockHome.unknownAboveOurs(snap, stocks))
         return when {
             f.installRefusal || fireOs || p?.platform == Platform.TCL_CN || TclChina.applies(f, p) -> HomeBlock.TV_REFUSES
             f.sdk < DefaultPlanner.TV_MIN_SDK -> HomeBlock.OLD_ANDROID
@@ -856,6 +902,24 @@ class SetupMachine(
             risk == HomeSwitchRisk.Risk.PATCHWALL_FEEDS -> HomeBlock.PATCHWALL_FEEDS
             else -> HomeBlock.NONE
         }
+    }
+
+    // RFC-HELPER-1 (test build): the TV's own home screen the Home button helper would send on from,
+    // or null when Customise does not offer it here: not this build, a TV that refuses other home
+    // screens or installs or runs an old Android, a home screen changed by the person or unknown, our
+    // launcher already Home, or a rule of HomeHelper.refusal (a home screen that is not Google's, S3, S4).
+    private fun helperStock(snap: Snapshot, block: HomeBlock): Component? {
+        if (!deps.homeHelper) return null
+        if (block == HomeBlock.TV_REFUSES || block == HomeBlock.OLD_ANDROID || block == HomeBlock.HOME_CHANGED || block == HomeBlock.UNKNOWN_HOME) return null
+        if (snap.home.resolved?.pkg == deps.launcherPin.bundled().pkg) return null
+        val stocks = when (val r = resolution) {
+            is ProfileResolution.Exact -> r.profile.stockLaunchers
+            is ProfileResolution.BrandSureSet -> r.stockLaunchers
+            is ProfileResolution.None -> r.stockLaunchers
+            null -> return null
+        }
+        if (HomeHelper.refusal(snap, stocks, refusesOtherHomes = false, build = true) != null) return null
+        return HomeHelper.stock(snap, stocks)
     }
 
     // Plans the Setup from the current snapshot and draft; pure and quick (the planner is pure).
@@ -885,11 +949,15 @@ class SetupMachine(
         }
         val journals = attempt { deps.ledger.changes(record.id) }.getOrDefault(emptyList())
         val block = homeBlock(snap, wifi, journals, PatchWallFeeds.goesOff(snap, groups, draft.kept, draft.extraOff))
-        val possible = block == HomeBlock.NONE
+        // RFC-HELPER-1 (test build): the Home button helper instead of the switch, when the person
+        // switched it on in Customise and this TV meets its rules (HomeHelper.refusal, as the planner).
+        val helperStock = helperStock(snap, block)
+        val helper = helperStock != null && draft.homeHelper
+        val possible = block == HomeBlock.NONE && !helper
         val choices = Choices(
             kept = draft.kept, extraOff = draft.extraOff, dock = dock,
             theme = theme,
-            installLauncher = possible, takeover = possible,
+            installLauncher = possible || helper, takeover = possible, homeHelper = helper,
             replaceLauncherSigner = installed?.signer?.let { it != launcher.signer } ?: false,
             keepDebuggingOn = draft.keepDebuggingOn,
             wizardWifi = wifi,
@@ -915,10 +983,14 @@ class SetupMachine(
         val lookApps = kept.map { p -> AppChoice(p, label(p)) }
         val keyNames = lookContext.keyNames || (deps.documents?.let { docs -> attempt { AppPrefs(docs).load() }.getOrNull()?.lookKeyNames } ?: false)
         val candidates = DockCandidates.of(snap, launchable, profile(), deps.facts).map { AppChoice(it, label(it)) }.sortedBy { it.name.lowercase() }
+        // 0.4.7: a dock the person set in Customise keeps its free spaces empty; the picked one fills them.
         lookContext = LookContext(apps = lookApps, others = candidates.filter { it.pkg !in kept }, mine = mine, new = new, tv = tvLook, cards = cards,
-            keyNames = keyNames)
+            keyNames = keyNames, dockChosen = draft.dock != null)
         val sheet = mutableExtras.value.look?.let { drafts.refresh(it, lookContext) } ?: drafts.open(choice, lookContext)
-        val look = if (!possible) null else attempt { val (doc, w) = drafts.docOf(sheet, dock, cards, lookContext); Look.encode(deps.encoder, deps.blobs, doc, w) }
+        // 0.4.7: the TV's Live TV app (LiveTvKeys, as Manage's LookCarry), not one switched off here.
+        val liveTv = LiveTvKeys.pick(profile(), snap.packages, draft.extraOff)
+        val look = if (!possible && !helper) null else attempt { val (doc, w) = drafts.docOf(sheet, dock, cards, lookContext)
+            Look.encode(deps.encoder, deps.blobs, LiveTvKeys.apply(if (helper) HomeHelperKeys.with(doc, helperStock!!.pkg) else doc, liveTv), w) }
             .onFailure { deps.log.line("setup: the look could not be encoded, planned without it") }.getOrNull()
         // What Manage starts from once the run pushed it, saved as the Look sheet saves it, in the new
         // form: a photo made here is kept for the TV (and saved as "mine") only once the TV has it.
@@ -929,7 +1001,7 @@ class SetupMachine(
             chosen == LookPicture.MINE_ID -> saved?.dim ?: OwnPicture.DEFAULT_DIM
             else -> null
         }
-        setupHome = look?.let { SetupHome(it.digest, drafts.choiceOf(sheet, saved, kept, cards, chosen, dim), photo?.takeIf { sendsNew }, saved) }
+        setupHome = look?.let { SetupHome(it.digest, drafts.choiceOf(sheet, saved, kept, cards, chosen, dim, dockChosen = draft.dock != null), photo?.takeIf { sendsNew }, saved) }
         // RFC-CURTAIN-1: the TV shows the progress unless Custom switched it off (Simple never shows
         // the switch). An asset that does not match its pin is never offered; the plan goes without it.
         val showOnTv = draft.level == Level.SIMPLE || draft.curtain
@@ -945,18 +1017,29 @@ class SetupMachine(
                 // 0.3.2 B3: why the home screen switch is or is not in the plan, once per change, and
                 // kept for the TV report (B1) that Manage makes without the TV.
                 val decision = HomeDecision.of(block, r.plan.sections.isNotEmpty(), snap.home.resolved?.pkg == launcher.pkg,
-                    app = deps.about?.version, profile = LogCodes.profile(res))
+                    app = deps.about?.version, profile = LogCodes.profile(res), redirect = helper)
                 if (decision != lastDecision) {
                     lastDecision = decision
                     deps.log.line("setup: ${decision.line}")
                     deps.homeDecisions?.let { store -> attempt { store.save(record.id, decision) } }
                 }
+                // 0.4.7 (HomeKept): what the Customise sheet needs to name the home screen's own rows,
+                // and PatchWall's part in the decision (PatchWallFeeds): keeping it on while its feeds
+                // are off (not by this app) keeps the TV's own home screen.
+                val wizard = profile()?.setupWraith?.takeIf { it in snap.packages } ?: snap.packages.keys.firstOrNull { "setupwraith" in it.value.lowercase() }
+                val roles = homeRoles(wizard, stocks(), snap.home.claimants.map { it.component.pkg } + listOfNotNull(snap.home.resolved?.pkg))
+                val patchWall = PatchWallFeeds.PATCHWALL.takeIf { PatchWallFeeds.installed(snap, it) && !PatchWallFeeds.isOff(snap, it) }
+                val holds = patchWall != null && PatchWallFeeds.stayingOff(snap, journals, patchWallGoesOff = false).isNotEmpty()
+                val sent = deps.sentReports?.let { s -> attempt { s.load(record.id) }.getOrNull() }
                 // The look step's draft and preview, from the whole draft dock (its waiting apps too).
                 mutableExtras.update {
                     it.copy(commands = commandsOf(r.plan), unknownModel = res !is ProfileResolution.Exact, homePossible = possible, homeBlock = block,
+                        helperOffer = helperStock != null, helperOn = helper,
                         noScreenLock = !deps.screenLock.available(), draft = draft, dock = dock.map { p -> AppChoice(p, label(p)) }, apps = apps,
                         dockColumns = columns, look = sheet, ownPicture = own, ownDim = saved?.dim ?: OwnPicture.DEFAULT_DIM,
-                        newPicture = photo?.ref, newDim = photo?.dim ?: OwnPicture.DEFAULT_DIM, waiting = DockLayers.waiting(kept.size, columns))
+                        newPicture = photo?.ref, newDim = photo?.dim ?: OwnPicture.DEFAULT_DIM, waiting = DockLayers.waiting(kept.size, columns),
+                        brand = LogCodes.clean(deviceFacts?.brand ?: snap.facts.brand, 40), homeRoles = roles, patchWall = patchWall, patchWallHoldsHome = holds,
+                        reportSentAtMs = sent?.atMs)
                 }
                 send(Ev.PlanReady(record.id, r.plan, draft.level))
             }
@@ -1170,6 +1253,8 @@ class SetupMachine(
         lastFinished = f
         mutableExtras.update { it.copy(rollingBack = false, highlightStop = false, reconnect = null) }
         if (f.home == HomeOutcome.VERIFY_FAILED) logHomeSwitchFailure(f.plan)
+        // 0.4.7: a look the TV refused is named in the log with the TV's answer, never only counted as a skip.
+        attempt { RunLines.lookSkipped(f, deps.ledger) }.getOrNull()?.let { deps.log.line("setup: $it") }
         when {
             // A Manage write resumed from the S4e card (after process death) ends in Manage, never on Done.
             f.plan.kind != PlanKind.SETUP -> effect(SetupEffect.Navigate("manage/${tvId.value}"))
@@ -1180,7 +1265,11 @@ class SetupMachine(
                 send(Ev.Stop(tvId, homePutBackCard(f.plan.id)))
             f.status == RunStatus.ABANDONED -> effect(SetupEffect.Navigate("manage/${tvId.value}"))
             f.home != null && f.home != HomeOutcome.CONFIRMED -> send(Ev.Stop(tvId, homeCard(f, switchedOffSoFar(f.plan))))
-            else -> showDone(tvId, f, homeOn = f.plan.sections.isNotEmpty() && f.home == HomeOutcome.CONFIRMED)
+            // 0.4.7-beta1 QA: the engine finishes a confirmed section with no HomeOutcome (null; only a rolled back
+            // one carries its outcome, and that went to the card above), so a run that got here with a section held
+            // its switch or its helper. Before, Done never said "New home screen on" and the TV record never got
+            // its launcher, so Manage took a helper TV for "installed, not in use".
+            else -> showDone(tvId, f, homeOn = f.plan.sections.isNotEmpty() && (f.home == null || f.home == HomeOutcome.CONFIRMED))
         }
     }
 
@@ -1209,7 +1298,9 @@ class SetupMachine(
         val keptNames = skipped.filter { it.index in kept }.mapNotNull { (it.op as? Op.Disable)?.pkg }.map { nameOfPkg(it) }
         val skippedNames = skipped.filter { it.index !in kept }.mapNotNull { (it.op as? Op.Disable)?.pkg }.map { nameOfPkg(it) }
         val p = profile()
-        val recommended = p == null || Quirk.HOME_TAKEOVER_SETUPWRAITH in p.quirks || p.tested?.rebootTested != true
+        // UX finding 24: the wizard quirk only matters when the switch ran; a kept home screen on a
+        // reboot tested profile has nothing a restart could check.
+        val recommended = p == null || (homeOn && Quirk.HOME_TAKEOVER_SETUPWRAITH in p.quirks) || p.tested?.rebootTested != true
         // beta3 QA: the restore point Undo everything goes back to is the first read (the baseline),
         // so Done names that one, and says when it is from an earlier run.
         val baseline = deps.snapshots.baseline(tvId)
@@ -1219,6 +1310,11 @@ class SetupMachine(
         // D15: the digest of the config.json this run pushed, so Manage can warn when it drifts.
         val pushed = plan?.let { pl -> deps.ledger.changes(tvId).lastOrNull { c -> c.planId == pl.id && (c.op as? Op.PushAsset)?.dest?.let { d -> d.dir == RemoteDir.OVERLAY && d.segments.last() == "config.json" } == true } }
         val digest = (pushed?.op as? Op.PushAsset)?.sha256
+        // UX finding 18 (issues #1279, #1649): the look's steps (config.json or the picture, by a sync
+        // push or the launcher's ThemeProvider) CONTINUE on failure, so the run ends well without it;
+        // Done says so, and the choice is saved anyway so the Look sheet opens on it and "Put it on
+        // the TV" sends it again. The same steps as the log's and the report's "look not sent" line.
+        val lookFailed = homeOn && skipped.any { RunLines.isLookSend(it) }
         val done = record.copy(
             wizard = null,
             launcher = if (homeOn) LauncherState(launcher.versionCode, launcher.signer, digest ?: record.launcher?.overlayDigest, digest ?: record.launcher?.ourOverlayDigest)
@@ -1232,8 +1328,10 @@ class SetupMachine(
         // when it cannot be kept, the picture stays as it was saved.
         // look2: the look the TV had before becomes the earlier look (EarlierLook): the one this
         // phone saved, or for a first Setup the Default look.
-        setupHome?.takeIf { it.digest == digest }?.let { home ->
-            val photo = home.photo
+        setupHome?.takeIf { it.digest == digest || lookFailed }?.let { home ->
+            // A photo that never reached the TV is not kept as the TV's (the choice falls back to the
+            // picture saved before); the rest of the choice is saved so the sheet opens on it.
+            val photo = home.photo?.takeUnless { lookFailed }
             val oldPhoto = deps.documents?.let { docs -> attempt { docs.read(OwnPicture.path(tvId)) { it } }.getOrNull() }
             val keptPhoto = photo != null && deps.documents?.let { docs -> attempt { OwnPicture.keep(docs, tvId, photo.jpeg) }.isSuccess } == true
             val choice = if (photo == null || keptPhoto) home.choice
@@ -1260,10 +1358,40 @@ class SetupMachine(
         // of time, the person said no, the new one did not take over): Done says the home screen is
         // unchanged and why, never only "Your TV is ready".
         val homeKept = f?.home?.takeIf { !homeOn && it != HomeOutcome.CONFIRMED && plan?.sections?.isNotEmpty() == true }
+        if (lookFailed) deps.log.line("setup: the look did not reach the TV; the choice is kept for the Look sheet")
         mutableExtras.update { it.copy(doneLines = skippedNames, doneKept = keptNames, doneNothing = off == 0 && !homeOn && !changed, doneNothingWhy = why,
-            keepsDebugging = keepsDebugging(tvId), doneHomeKept = homeKept) }
+            keepsDebugging = keepsDebugging(tvId), doneHomeKept = homeKept, doneLookFailed = lookFailed) }
         send(Ev.ShowDone(tvId, DoneSummary(off, homeOn, restorePointAt, skippedNames, recommended, restorePointEarlier)))
         session?.let { s -> mutableExtras.update { it.copy(restorePointPushed = deps.restorePoint.write(done, s, p)) } }
+        session?.let { s ->
+            // 0.4.8 (Restarts): the boot this Done starts from, so the restart check below (or Manage's next connect after
+            // a restart) has something to count against.
+            if (homeOn) countRestart(done, s)
+            // PLAN item 3: the look went to the TV with the new home screen: the TV as it looks now, one screenshot.
+            if (homeOn && !lookFailed && setupHome?.digest?.let { it == digest } == true) {
+                attempt { deps.prober.screenshot(s) }.getOrNull()?.let { png -> mutableExtras.update { it.copy(doneShot = png) } }
+            }
+        }
+    }
+
+    // 0.4.8 (Restarts): the TV's Home and its boot_id, on a TV this app switched (or gave the helper); the read counts a
+    // held or a failed restart against the one before it. Nothing else is read, nothing is written to the TV.
+    private suspend fun countRestart(record: Tv, s: TvSession): RestartRead? {
+        val restarts = deps.restarts ?: return null
+        val latest = attempt { deps.snapshots.latest(record.id) }.getOrNull()
+        val decision = attempt { deps.homeDecisions?.load(record.id) }.getOrNull()
+        val path = HomePath.of(record, latest, decision) ?: return null
+        val home = attempt { deps.prober.homeNow(s) }.getOrNull()?.takeIf { Restarts.settled(it) } ?: return null
+        val boot = attempt { deps.prober.bootId(s) }.getOrNull() ?: return null
+        val build = deps.about?.countLine ?: "unknown"
+        val o = attempt { restarts.observe(record.id, boot, home, path, build, deps.clock.nowMs()) }.getOrNull() ?: return null
+        when (o.read) {
+            RestartRead.HELD -> deps.log.line("setup: restart held (${path.word}), ${o.tally.held} held, ${o.tally.failed} failed")
+            RestartRead.FAILED -> deps.log.line("setup: restart failed (${path.word}): Home does not answer to the new home screen, ${o.tally.held} held, ${o.tally.failed} failed")
+            else -> {}
+        }
+        mutableExtras.update { it.copy(restarts = o.tally) }
+        return o.read
     }
 
     private suspend fun stopAndUndo() {
@@ -1306,6 +1434,14 @@ class SetupMachine(
         deps.log.line("setup: the setup wizard is only switched off as part of the home screen switch; the old home screen stays")
         leaveOldHome()
     }
+
+    // The TV's own home screens the resolution knows (the profile's, or the brand set's).
+    private fun stocks(): List<PackageName> = when (val r = resolution) {
+        is ProfileResolution.Exact -> r.profile.stockLaunchers
+        is ProfileResolution.BrandSureSet -> r.stockLaunchers
+        is ProfileResolution.None -> r.stockLaunchers
+        null -> emptyList()
+    }.map { it.pkg }
 
     // Issue #375: a saved choice the planner would refuse (the wizard put there by "Try with the
     // wizard off" in 0.3.4 and 0.3.5, or an app that became a home screen or a protected package
@@ -1357,10 +1493,10 @@ class SetupMachine(
     private fun onStopAction(s: SetupState, action: StopAction) {
         val case = (s as? SetupState.Stopped)?.card?.case ?: mutableExtras.value.card?.case ?: return
         when (case) {
-            // D3: on the Wi-Fi card the primary tries the switch again (Wi-Fi asked afresh), never
-            // with the wizard off.
+            // D3, UX finding 16: on the Wi-Fi card the primary keeps the TV's own home screen; the
+            // second button tries the switch again (the Wi-Fi asked afresh), never with the wizard off.
             StopCase.HOME_SETUPWRAITH -> when {
-                action != StopAction.PRIMARY -> send(SetupIntent.LeaveOldHome)
+                action == StopAction.PRIMARY -> send(SetupIntent.LeaveOldHome)
                 wifiCard -> scope.launch { tv?.let { retakeover(it) } }
                 else -> send(SetupIntent.TryWithWizardOff)
             }
@@ -1535,9 +1671,12 @@ class SetupMachine(
 
     // After the restart: things that came back on are switched off again (UX 4.8).
     private suspend fun backAfterRestart(record: Tv, s: TvSession, afterMs: Long) {
-        mutableExtras.update { it.copy(card = null) }
+        mutableExtras.update { it.copy(card = null, restartRead = null) }
+        // 0.4.8 (Restarts): Home is read before the leftovers are switched off again, so the count says what the
+        // restart did by itself; only a new boot counts, so a read with the same boot says nothing on Done.
+        val read = if ((state.value as? SetupState.Done)?.summary?.homeScreenOn == true) countRestart(tv ?: record, s) else null
         val came = attempt { switchOffLeftovers(record, s) }.getOrDefault(0)
-        mutableExtras.update { it.copy(restartReenabled = came) }
+        mutableExtras.update { it.copy(restartReenabled = came, restartRead = read?.takeIf { it == RestartRead.HELD || it == RestartRead.FAILED }) }
         send(Ev.RestartUpdate(RestartState.Back(afterMs)))
     }
 
@@ -1582,6 +1721,17 @@ class SetupMachine(
     // session's choice). Done's line and Finish both read it, so the line says what Finish will do.
     private fun keepsDebugging(tvId: TvId): Boolean =
         tv?.wizard?.keepDebuggingOn == true || mutableExtras.value.draft?.keepDebuggingOn == true || deps.sessionEnd.keepsDebuggingOn(tvId)
+
+    // 0.4.7: Setup ends without a run (nothing to switch off, the TV keeps its own home screen). The
+    // draft is cleared so the app does not reopen the wizard, then Finish's own steps.
+    private suspend fun leaveAsIs(tvId: TvId) {
+        val record = tv ?: deps.tvs.tvs.value.firstOrNull { it.id == tvId } ?: return
+        deps.log.line("setup: left as is, nothing to switch off")
+        val done = record.copy(wizard = null, lastSeenAt = deps.clock.nowMs())
+        tv = done
+        attempt { deps.tvs.upsert(done) }
+        finish(tvId)
+    }
 
     // D7: Finish switches debugging off unless "Keep debugging on" was chosen, then opens Manage.
     private suspend fun finish(tvId: TvId) {
@@ -1679,13 +1829,16 @@ class SetupMachine(
         }
         if (case == StopCase.HOME_PUT_BACK) return homePutBackCard(f.plan.id)
         // D3: the wizard holds Home, but it may have saved the TV's Wi-Fi, so switching it off is not
-        // offered; the card says why and what to do instead.
+        // offered; the card says why and what to do instead. UX finding 16: the primary keeps the
+        // TV's own home screen (trying again at once repeats the same failure); the second button
+        // tries the switch again once the person has done what the card asks.
         wifiCard = case == StopCase.HOME_SETUPWRAITH
         if (wifiCard) {
             // The owner's sentence only when the TV said the wizard saved the Wi-Fi; never a claim the
             // app could not check (RF-LAUNCHER-240 F6).
-            val body = if (wizardWifi == WizardWifi.OWNER) CopyKey.STOP_HOME_SETUPWRAITH_WIFI_BODY else CopyKey.STOP_HOME_SETUPWRAITH_WIFI_UNKNOWN_BODY
-            return card(case, f.plan.id, body = body, primary = CopyKey.STOP_HOME_SETUPWRAITH_WIFI_PRIMARY)
+            val owner = wizardWifi == WizardWifi.OWNER
+            return card(case, f.plan.id, body = if (owner) CopyKey.STOP_HOME_SETUPWRAITH_WIFI_BODY else CopyKey.STOP_HOME_SETUPWRAITH_WIFI_UNKNOWN_BODY,
+                secondary = if (owner) CopyKey.STOP_HOME_SETUPWRAITH_WIFI_SECONDARY else CopyKey.STOP_HOME_USER_SAID_NO_PRIMARY)
         }
         // QA of 0.4.5: "Your TV is as it was" only when nothing stayed switched off; otherwise the
         // card says how many things are still off and that the home screen is as it was.
@@ -1748,11 +1901,12 @@ class SetupMachine(
 
     private fun counts(plan: Plan, done: Int): Map<String, Any> = mapOf("done" to done, "total" to plan.steps.count { it.op is Op.Disable })
 
-    private fun card(case: StopCase, planId: PlanId?, args: Map<String, Any> = emptyMap(), body: CopyKey? = null, primary: CopyKey? = null): StopCard {
+    private fun card(case: StopCase, planId: PlanId?, args: Map<String, Any> = emptyMap(), body: CopyKey? = null, primary: CopyKey? = null,
+                     secondary: CopyKey? = null): StopCard {
         val k = stopKeys(case)
         val c = deps.copy
         return StopCard(case, c.text(k.title, args), c.text(body ?: k.body, args), c.text(primary ?: k.primary, args),
-            k.secondary?.let { c.text(it, args) }, planId, k.tertiary?.let { c.text(it, args) })
+            (secondary ?: k.secondary)?.let { c.text(it, args) }, planId, k.tertiary?.let { c.text(it, args) })
     }
 
     private fun tvIdOf(s: SetupState): TvId? = when (s) {
@@ -1807,8 +1961,9 @@ class SetupMachine(
         fun commandsOf(plan: Plan): List<String> = plan.steps.flatMap { step ->
             val lines = step.rendered.lines.map { it.text }
             val t = step.rendered.transfer
-            lines + listOfNotNull(when (t) {
-                is Transfer.Push -> "sync:${t.dest.absolute} ${t.src.sha256.hex}"
+            // RFC-THEME-1: a push runs before the op's lines, so it is shown first.
+            listOfNotNull((t as? Transfer.Push)?.let { "sync:${it.dest.absolute} ${it.src.sha256.hex}" }) + lines + listOfNotNull(when (t) {
+                is Transfer.Push -> null
                 is Transfer.Pull -> "sync:${t.src.absolute} ${t.maxBytes}"
                 is Transfer.StreamInstall -> "sync:${t.src.path} ${t.size}"
                 null -> null
@@ -1823,7 +1978,9 @@ private val SETTINGS_PACKAGES = setOf("com.android.tv.settings", "com.android.se
 internal data class StopKeys(val title: CopyKey, val body: CopyKey, val primary: CopyKey, val secondary: CopyKey?, val tertiary: CopyKey? = null)
 
 internal fun stopKeys(case: StopCase): StopKeys = when (case) {
-    StopCase.HOME_SETUPWRAITH -> StopKeys(CopyKey.STOP_HOME_SETUPWRAITH_TITLE, CopyKey.STOP_HOME_SETUPWRAITH_BODY, CopyKey.STOP_HOME_SETUPWRAITH_PRIMARY, CopyKey.STOP_HOME_SETUPWRAITH_SECONDARY)
+    // 0.4.7 (UX finding 16): the wizard card is the Wi-Fi card (homeCard): "Keep the TV's own home
+    // screen" first, "Try again" second; the Wi-Fi owner's body and button replace these on it.
+    StopCase.HOME_SETUPWRAITH -> StopKeys(CopyKey.STOP_HOME_SETUPWRAITH_TITLE, CopyKey.STOP_HOME_SETUPWRAITH_WIFI_UNKNOWN_BODY, CopyKey.STOP_HOME_SETUPWRAITH_SECONDARY, CopyKey.STOP_HOME_USER_SAID_NO_PRIMARY)
     StopCase.HOME_OTHER_LAUNCHER -> StopKeys(CopyKey.STOP_HOME_OTHER_LAUNCHER_TITLE, CopyKey.STOP_HOME_OTHER_LAUNCHER_BODY, CopyKey.STOP_HOME_OTHER_LAUNCHER_PRIMARY, CopyKey.STOP_HOME_OTHER_LAUNCHER_SECONDARY)
     StopCase.HOME_UNKNOWN -> StopKeys(CopyKey.STOP_HOME_UNKNOWN_TITLE, CopyKey.STOP_HOME_UNKNOWN_BODY, CopyKey.STOP_HOME_UNKNOWN_PRIMARY, CopyKey.STOP_HOME_UNKNOWN_SECONDARY)
     StopCase.HOME_USER_SAID_NO -> StopKeys(CopyKey.STOP_HOME_USER_SAID_NO_TITLE, CopyKey.STOP_HOME_USER_SAID_NO_BODY, CopyKey.STOP_HOME_USER_SAID_NO_PRIMARY, CopyKey.STOP_HOME_USER_SAID_NO_SECONDARY)

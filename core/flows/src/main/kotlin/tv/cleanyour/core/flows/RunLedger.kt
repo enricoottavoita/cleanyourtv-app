@@ -137,6 +137,21 @@ class RunLedger(private val store: DocumentStore, private val journal: Journal) 
         return if (endsWithPause) paused else if (stepR) stepRFailure else atFailure
     }
 
+    // 0.4.7 (issues #1279, #1649): the last Failed record of step `i`, a step the run went on past (its policy
+    // CONTINUE), for the report's look line; null when the journal shows none.
+    suspend fun failureAt(planId: PlanId, i: Int): LastFailure? {
+        var begun: JournalRecord.Begin? = null
+        var found: LastFailure? = null
+        for (r in journal.read(planId)) when (r) {
+            is JournalRecord.Begin -> begun = r
+            is JournalRecord.Failed -> if (r.i == i && r.error != DefaultEngine.KEPT_TV_INPUT) {
+                begun?.takeIf { it.i == r.i }?.let { found = LastFailure(it.op, r.exit, r.stderrHead.ifEmpty { r.error }, undo = false) }
+            }
+            else -> {}
+        }
+        return found
+    }
+
     // Why a home screen switch ended VERIFY_FAILED (issue #338: three tries, each "rolling back" with
     // nothing in the log to say why): the first failed step that the switch stands on, from the
     // journal. That is a step inside the guarded section before its rollback, or, when the section
@@ -192,7 +207,7 @@ class RunLedger(private val store: DocumentStore, private val journal: Journal) 
 
     companion object {
         // Step R's ops whose failure means the TV's own home screen is not back (the engine's rule).
-        private fun mustSucceed(op: Op): Boolean = op is Op.Enable || op is Op.SetHome || op is Op.VerifyHome
+        private fun mustSucceed(op: Op): Boolean = op is Op.Enable || op is Op.SetHome || op is Op.VerifyHome || op is Op.AccessibilityRemove
 
         fun isChange(op: Op): Boolean = when (op) {
             is Op.Read, is Op.VerifyHome, is Op.Settle, Op.PressHome, is Op.CurtainCue -> false

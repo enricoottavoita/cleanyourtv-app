@@ -237,7 +237,7 @@ def dex_contains(path, needle, prefix=""):
 
 # Test-build switches carried as bundled marker files (a Gradle property each, off by default). In an
 # APK a Java resource sits at the root, in a bundle under base/root/.
-TEST_BUILD_MARKERS = ("tv/cleanyour/core/planner/wizard-stays-any-brand",)
+TEST_BUILD_MARKERS = ("tv/cleanyour/core/planner/wizard-stays-any-brand", "tv/cleanyour/core/planner/home-helper")
 PRERELEASE = re.compile(r"^\d+\.\d+\.\d+(\.\d+)?-(alpha|beta|rc)\.?\d*$")
 
 

@@ -3,6 +3,7 @@ package tv.cleanyour.core.flows
 import tv.cleanyour.core.model.AdbError
 import tv.cleanyour.core.model.AdbException
 import tv.cleanyour.core.model.DeviceFacts
+import tv.cleanyour.core.model.FileRoute
 import tv.cleanyour.core.model.Op
 import tv.cleanyour.core.model.Snapshot
 import tv.cleanyour.core.planner.SwitchOffRule
@@ -79,8 +80,9 @@ object LogCodes {
         is Op.KillWatchdog -> "KillWatchdog"
         Op.PressHome -> "PressHome"
         is Op.Mkdir -> "Mkdir ${op.dir.name.lowercase()}"
-        is Op.PushAsset -> "PushAsset ${op.dest.segments.last()}"
-        is Op.RemoveFile -> "RemoveFile ${op.path.segments.last()}"
+        // RFC-THEME-1: a report says when the launcher's provider was the way in.
+        is Op.PushAsset -> "PushAsset ${op.dest.segments.last()}${if (op.route == FileRoute.THEME_PROVIDER) " via provider" else ""}"
+        is Op.RemoveFile -> "RemoveFile ${op.path.segments.last()}${if (op.route == FileRoute.THEME_PROVIDER) " via provider" else ""}"
         is Op.RestartHome -> "RestartHome ${op.component.flat}"
         is Op.StartActivity -> "StartActivity ${op.component.flat}"
         is Op.Read -> "Read ${op.kind.name.lowercase()}"
@@ -88,6 +90,10 @@ object LogCodes {
         Op.Reboot -> "Reboot"
         Op.DebugOff -> "DebugOff"
         is Op.CurtainCue -> "CurtainCue ${op.stage.name.lowercase()}"
+        // RFC-HELPER-1: how many entries, never their names (another app's service is not named).
+        is Op.AccessibilityAdd -> "AccessibilityAdd ${op.component.flat} after ${tv.cleanyour.core.ops.HelperLines.entries(op.expected).size}"
+        is Op.AccessibilityRemove -> "AccessibilityRemove ${op.component.flat}${if (op.expected == null) " on the TV" else ""}"
+        is Op.ArmHelperWatchdog -> "ArmHelperWatchdog"
     }
 
     // How the profile resolved: "exact <id>", "candidate <id>" (test build: a list not tested yet,
