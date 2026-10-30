@@ -12,14 +12,6 @@
    "match": {"brands": ["XGIMI"], "devices": ["altai"]}
   },
   {
-   "id": "xiaomi-android-14",
-   "title": "Xiaomi and Redmi TVs on Android 14",
-   "version": "0.4.7",
-   "short": "the new home screen.",
-   "what": "The new home screen with the setup wizard left on, as on Android 9 to 11. It works in our test builds, and it comes to everyone once three testers confirm it holds after a restart on Android 14.",
-   "match": {"brands": ["Xiaomi", "Redmi"], "sdk": [34], "blocks": ["WIZARD_STAYS_ON", "WIZARD_WIFI", "WIZARD_WIFI_UNKNOWN"], "r0": true}
-  },
-  {
    "id": "chromecast",
    "title": "Chromecast with Google TV and the Google TV Streamer",
    "version": "0.4.8 test build",

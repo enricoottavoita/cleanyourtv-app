@@ -8,7 +8,8 @@ Builds one row per TV (brand, model and codename) from three inputs, models and 
   2. The release scan of the TV reports: a TSV with one row per issue, the newest report run
      through the release's own home screen rule (columns brand, manufacturer, model, device,
      android, res, b046final, r0Blocker, heldOut, resolved, claimants). b046final is the release's
-     HomeBlock; NONE means the switch is planned.
+     HomeBlock; NONE means the switch is planned. A scan from an earlier release can be reused: the
+     release's own rule is read from the checkout (below) and laid over it.
   3. site/tvs/coming-soon.json, kept by hand: what the next versions bring, with match rules.
   4. Optionally the confirmations table the issue routine keeps (-k, research/release-0.4.7/
      confirmations.json, from scripts/triage/confirm.py on the triage-bot branch): for each brand and
@@ -16,6 +17,13 @@ Builds one row per TV (brand, model and codename) from three inputs, models and 
      many the graduation rule needs (2 per brand and Android version since 2026-10-29; it was 3 on a version not yet proven). Next
      test build TVs, and Coming soon TVs waiting for that count, show "N of M confirmations". Only the
      counts are read, never who confirmed.
+
+The release's rule, from the checkout's HomeSwitchRisk.kt (since 0.4.7): the GRADUATED table (the
+brand and Android version pairs, models and sets the release gives the switch with the setup wizard
+left on) and MOKA_FAMILY (the boards that never get the switch). Over a scan of an earlier release,
+a report the test build's switch would take (r0_test_build) and a GRADUATED row covers gets the new
+home screen, and a MOKA board keeps its own home screen (BOOT_LOOP). A checkout without the table
+(0.4.6) or a profile-meta.json leaves the scan as it is.
 
 Statuses, best first: new (the release gives the new home screen), test ("Next test build": our
 test builds do, through the switch with the setup wizard left on for any brand), soon (named in coming-soon.json),
@@ -31,18 +39,19 @@ browsers without JavaScript, inside its <noscript id="tvlist">.
 
 How to refresh it at each release:
 
-  1. Check out the release tag in a worktree (for 0.4.6: cyt-wt/up046 at v0.4.6).
+  1. Check out the release tag in a worktree (for 0.4.7: cyt-wt/stable047 at v0.4.7).
   2. Run the release scan over the newest report of every issue (the throwaway Scan046 test, never
-     committed) and keep its TSV.
+     committed) and keep its TSV. 0.4.7 reused the 0.4.6 scan, with the 0.4.7 rule laid over it.
   3. Edit site/tvs/coming-soon.json: drop what shipped, add what the next versions bring.
   4. Run, check the page, then commit site/tvs/ with the release:
 
-       scripts/tv-list.py scan-out-final.tsv ../up046 -r 0.4.6 -d 2026-10-28 \\
+       scripts/tv-list.py scan-out-final.tsv ../stable047 -r 0.4.7 -d 2026-10-30 \\
+           -t https://github.com/udhaykumarbala/cleanyourtv-app/releases/tag/v0.4.8-beta1 \\
            -o site/tvs/tvs.json -p site/tvs/index.html
 
-     The second argument is the checkout (default: cyt-wt/up046) or a profile-meta.json; the test
-     build's lists are read from a checkout only. When the test build's switch rule changes
-     (HomeSwitchRisk.r0Blocker), update r0_test_build() below.
+     The second argument is the checkout (default: cyt-wt/stable047) or a profile-meta.json; the
+     test build's lists and the release's rule are read from a checkout only. When the test build's
+     switch rule changes (HomeSwitchRisk.r0Blocker), update r0_test_build() below.
 
 Deterministic: rows sorted, the date from -d, else SOURCE_DATE_EPOCH, else today (UTC).
 Stdlib only.
@@ -59,17 +68,18 @@ import sys
 import urllib.parse
 
 SCHEMA = 1
-DEFAULT_APP = "/Users/jarvis/hobby/tv-vibe/cyt-wt/up046"
+DEFAULT_APP = "/Users/jarvis/hobby/tv-vibe/cyt-wt/stable047"
 DEFAULT_CONFIRMATIONS = "/Users/jarvis/hobby/tv-vibe/research/release-0.4.7/confirmations.json"
 PROFILE_META = "core/spec/src/main/resources/tv/cleanyour/core/spec/profile-meta.json"
 CANDIDATE_META = "core/spec/candidates/candidate-meta.json"
+HOME_SWITCH_RISK = "core/planner/src/main/kotlin/tv/cleanyour/core/planner/HomeSwitchRisk.kt"
 REPO = "https://github.com/udhaykumarbala/cleanyourtv-app"
 UPSTREAM = "https://github.com/Gathin23/cleanyourtv"
 
 ORDER = ["new", "test", "soon", "cleanup", "no"]
 STATUSES = {
     "new": ("New home screen", "The released app cleans up the TV and puts the new home screen on."),
-    "test": ("Next test build", "Works in our test builds; coming to everyone with 0.4.7 once testers confirm it on your brand."),
+    "test": ("Next test build", "Works in our test builds; coming to everyone in a later release once testers confirm it on your brand."),
     "soon": ("Coming soon", "Being worked on for the version shown; until then the app does the clean-up."),
     "cleanup": ("Clean-up only", "The app switches the clutter off and keeps the TV's own home screen, for the reason shown."),
     "no": ("Not possible", "This TV does not allow another home screen, so the clean-up is all the app can do."),
@@ -231,6 +241,93 @@ def r0_test_build(row):
     return True
 
 
+def kotlin_strings(text):
+    """The string literals of a Kotlin setOf(...)."""
+    return re.findall(r'"([^"]*)"', text)
+
+
+def kotlin_call(text, start):
+    """The text inside the parentheses that open at text[start]."""
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return text[start + 1:i]
+    raise ValueError("unclosed (")
+
+
+class ReleaseRule:
+    """The release's own switch rule where it differs from the scan's (HomeSwitchRisk.kt of the checkout).
+
+    graduated: the GRADUATED rows, each (makers, sdks, models, devices, excluded), as Graduated.covers
+    reads them (brand or manufacturer, case ignored). None when the checkout has no table (0.4.6, whose
+    scan already is its rule). moka: MOKA_FAMILY's (device, maker) pairs, plus MOKA_REPORTED.
+    """
+
+    def __init__(self, graduated=None, moka=()):
+        self.graduated = graduated
+        self.moka = set(moka)
+
+    @classmethod
+    def from_checkout(cls, path):
+        if not os.path.exists(path):
+            return cls()
+        with open(path, encoding="utf-8") as f:
+            src = "\n".join(line for line in f.read().splitlines() if not line.strip().startswith("//"))
+        sets = {m.group(1): kotlin_strings(kotlin_call(src, m.end() - 1))
+                for m in re.finditer(r"val (\w+): Set<String> = setOf\(", src)}
+        pairs = {}
+        for m in re.finditer(r"val (MOKA_\w+): Set<Pair<String, String>> = setOf\(", src):
+            pairs[m.group(1)] = re.findall(r'"([^"]+)" to "([^"]+)"', kotlin_call(src, m.end() - 1))
+        moka = pairs.get("MOKA_FAMILY", []) + pairs.get("MOKA_REPORTED", [])
+        m = re.search(r"val GRADUATED: List<Graduated> = listOf\(", src)
+        if not m:
+            return cls(None, moka)
+        table = kotlin_call(src, m.end() - 1)
+        rows = []
+        for g in re.finditer(r"Graduated\(", table):
+            body = kotlin_call(table, g.end() - 1)
+            body = body.strip()
+            makers = kotlin_strings(kotlin_call(body, 5)) if body.startswith("setOf(") else sets.get(body.split(",", 1)[0].strip())
+            sdks = re.search(r"(\d+)\.\.(\d+)", body)
+            if not makers or not sdks:
+                sys.exit(f"tv-list: cannot read GRADUATED row {body!r}")
+            named = {k: [] for k in ("models", "devices", "excludedDevices")}
+            for k in named:
+                n = re.search(r"\b" + k + r" = setOf\(", body)
+                if n:
+                    named[k] = kotlin_strings(kotlin_call(body, n.end() - 1))
+            rows.append(({x.lower() for x in makers}, range(int(sdks.group(1)), int(sdks.group(2)) + 1),
+                         {x.lower() for x in named["models"]}, {x.lower() for x in named["devices"]},
+                         {x.lower() for x in named["excludedDevices"]}))
+        if not rows:
+            sys.exit(f"tv-list: no GRADUATED rows in {path}")
+        return cls(rows, moka)
+
+    @staticmethod
+    def _maker(g, r):
+        return bool({r["brand"].strip().lower(), r["manufacturer"].strip().lower()} & g[0])
+
+    def covers(self, r):
+        """Graduated.covers on a report: a row gives this TV the switch with the wizard left on."""
+        sdk, model, device = sdk_of(r["android"]), r["model"].lower(), r["device"].lower()
+        return any(self._maker(g, r) and sdk in g[1] and (not g[2] or model in g[2]) and (not g[3] or device in g[3])
+                   and device not in g[4] for g in self.graduated or [])
+
+    def some_sets(self, r, sdk):
+        """A row names this maker and Android version but not this model or set: the release gave the
+        switch to some sets of the pair only, so the pair's confirmations are theirs, not this TV's."""
+        return any(self._maker(g, r) and sdk in g[1] for g in self.graduated or []) and not self.covers(r)
+
+    def is_moka(self, r):
+        dev = r["device"].lower()
+        makers = {r["brand"].strip().lower(), r["manufacturer"].strip().lower()}
+        return any(d.lower() == dev and m.lower() in makers for d, m in self.moka)
+
+
 def sdk_of(android):
     m = re.search(r"SDK (\d+)", android)
     return int(m.group(1)) if m else 0
@@ -305,6 +402,11 @@ def most(counter):
     return sorted(counter, key=lambda k: (-counter[k], k))[0] if counter else None
 
 
+# Pairs whose count was met but where the owner waits for more testers before a release gives them the
+# switch (0.4.7: Kogan on Android 11, a third tester, HomeSwitchRisk.GRADUATED's note).
+WAITS_LONGER = {("kogan", 30): 3}
+
+
 class Confirmations:
     """The counts per brand family and SDK from the routine's table (pairs and its rule), nothing else."""
 
@@ -314,18 +416,29 @@ class Confirmations:
         self.proven = {k: range(v[0], v[1] + 1) for k, v in rule.get("proven", {}).items()}
         self.need_proven, self.need_new = rule.get("need_proven", 2), rule.get("need_new", 3)
         self.held = {(p["brand"], p["sdk"]): p["held"] for p in doc.get("pairs", [])}
+        self.failed = {(p["brand"], p["sdk"]): p.get("failed", 0) for p in doc.get("pairs", [])}
 
     def family(self, brand):
         k = brand_key(brand)
         return self.families.get(k, k)
 
-    def of(self, brand, sdk):
-        fam = self.family(brand)
+    def of(self, r, sdk, rule=None):
+        """The count for a report's brand and Android version, or None when a count would mislead: the
+        pair met it, but a tester's home screen did not hold, so the release left it out."""
+        fam = self.family(r["brand"])
         need = self.need_proven if sdk in self.proven.get(fam, ()) else self.need_new
-        return {"have": min(self.held.get((fam, sdk), 0), need), "need": need, "android": ANDROID.get(sdk, f"SDK {sdk}")}
+        need = max(need, WAITS_LONGER.get((fam, sdk), need))
+        have = self.held.get((fam, sdk), 0)
+        sets = bool(rule and rule.some_sets(r, sdk))
+        if sets:
+            have = 0
+        elif self.failed.get((fam, sdk)) and have >= need:
+            return None
+        return {"have": min(have, need), "need": need, "android": ANDROID.get(sdk, f"SDK {sdk}"), **({"sets": True} if sets else {})}
 
 
-def build(profiles, cands, reports, soon_items, upstream, confirmations=None):
+def build(profiles, cands, reports, soon_items, upstream, confirmations=None, rule=None):
+    rule = rule or ReleaseRule()
     spellings = collections.defaultdict(list)
     groups = collections.OrderedDict()
     for r in reports:
@@ -359,6 +472,8 @@ def build(profiles, cands, reports, soon_items, upstream, confirmations=None):
         platform = profiles[exact]["platform"] if exact in profiles else None
         homes = [c[0] for c, _ in claimants(r["claimants"])] + [x[0] for x in [comp(r["resolved"])] if x]
         r0 = r0_test_build(r)
+        if rule.is_moka(r) and block not in ("TV_REFUSES", "OLD_ANDROID"):
+            block, r0 = "BOOT_LOOP", False              # the release's MOKA_FAMILY, newer than the scan
         item = first_soon([r["brand"], r["manufacturer"]], [r["device"]], [sdk], block, homes, r0, [exact] if exact else [])
         amazon = "amazon" in (brand_key(r["brand"]), brand_key(r["manufacturer"]))
         if block == "TV_REFUSES":
@@ -371,10 +486,12 @@ def build(profiles, cands, reports, soon_items, upstream, confirmations=None):
         if block == "NONE" or (block == "OURS" and exact):
             return "new", None, item
         if block == "OURS":
-            # Already the new home screen without a tested list: a test build switched it.
-            return "test", "TEST_R0", item
+            # Already the new home screen without a tested list: a test build switched it, and the release
+            # keeps it where a GRADUATED row covers the TV.
+            return ("new", None, item) if rule.covers(r) else ("test", "TEST_R0", item)
         if r0 and block in WIZARD_BLOCKS:
-            return "test", "TEST_R0", item
+            # The release's GRADUATED table gives this TV the switch with the wizard left on.
+            return ("new", None, item) if rule.covers(r) else ("test", "TEST_R0", item)
         if item:
             return "soon", block if block in REASONS else None, item
         return "cleanup", block if block in REASONS else "UNKNOWN_HOME", None
@@ -431,8 +548,9 @@ def build(profiles, cands, reports, soon_items, upstream, confirmations=None):
             # The count for this TV's brand and Android version (the best of its reports with this status).
             sdks = [sdk_of(r["android"]) for r, j in zip(rs, judged) if j[0] == status and sdk_of(r["android"])]
             if sdks:
-                row["confirm"] = max((confirmations.of(r["brand"], sdk) for r in rs for sdk in sdks if sdk_of(r["android"]) == sdk),
-                                     key=lambda c: (c["have"] / c["need"], c["android"]))
+                counts = [c for r in rs for sdk in sdks if sdk_of(r["android"]) == sdk for c in [confirmations.of(r, sdk, rule)] if c]
+                if counts:
+                    row["confirm"] = max(counts, key=lambda c: (c["have"] / c["need"], c["android"]))
         row["reports"] = len(rs)
         rows.append(row)
 
@@ -530,7 +648,7 @@ def main(argv=None):
                     help="app checkout at the release tag, or its profile-meta.json (default: %(default)s)")
     ap.add_argument("-c", dest="coming_soon", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "site", "tvs", "coming-soon.json"),
                     help="the coming soon file (default: site/tvs/coming-soon.json)")
-    ap.add_argument("-r", dest="release", default="0.4.6", help="the release the scan and lists are from (default: %(default)s)")
+    ap.add_argument("-r", dest="release", default="0.4.7", help="the release the scan and lists are from (default: %(default)s)")
     ap.add_argument("-d", dest="date", help="generated_at as YYYY-MM-DD (default: SOURCE_DATE_EPOCH, else today)")
     ap.add_argument("-o", dest="out", default="-", help="output file (default: stdout)")
     ap.add_argument("-t", "--test-build-url", dest="test_build_url",
@@ -545,6 +663,7 @@ def main(argv=None):
     else:
         meta_path, cand_path = os.path.join(a.app, PROFILE_META), os.path.join(a.app, CANDIDATE_META)
     meta = load(meta_path)
+    rule = ReleaseRule.from_checkout(os.path.join(a.app, HOME_SWITCH_RISK)) if cand_path else ReleaseRule()
     cands = load(cand_path)["profiles"] if cand_path and os.path.exists(cand_path) else {}
     soon = load(a.coming_soon)
     upstream = meta.get("upstreamCommit", "main")
@@ -552,7 +671,7 @@ def main(argv=None):
         reports = list(csv.DictReader(f, delimiter="\t"))
 
     confirmations = Confirmations(load(a.confirmations)) if a.confirmations else None
-    rows = build(meta["profiles"], cands, reports, soon["items"], upstream, confirmations)
+    rows = build(meta["profiles"], cands, reports, soon["items"], upstream, confirmations, rule)
 
     if a.date:
         date = a.date
