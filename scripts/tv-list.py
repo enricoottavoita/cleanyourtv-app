@@ -106,7 +106,7 @@ TV_MIN_SDK = 26          # DefaultPlanner.TV_MIN_SDK
 
 # Why the app keeps the TV's own home screen (the release's HomeBlock), in plain words, and what
 # would change it. The not possible ones have no change.
-HELPER = "The Home button helper, planned for a 0.4.8 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
+HELPER = "The Home button helper, in the 0.4.8-beta1 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
 REASONS = {
     "WIZARD_WIFI": ("The TV's setup wizard saved its Wi-Fi, so the wizard has to stay on, and switching the home screen with it on can crash the TV.", HELPER),
     "WIZARD_WIFI_UNKNOWN": ("The TV could not say who saved its Wi-Fi, so its setup wizard has to stay on, and switching the home screen with it on can crash the TV.", HELPER),

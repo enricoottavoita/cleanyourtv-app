@@ -5,7 +5,7 @@
   {
    "id": "xgimi-mogo-3-pro",
    "title": "XGIMI MoGo 3 Pro",
-   "version": "0.4.8 test build",
+   "version": "the 0.4.8-beta1 test build",
    "short": "the Home button helper.",
    "what": "The switch works, but the projector's remote keys turn Google TV's home screen back on. The Home button helper keeps Home on the new home screen.",
    "override": true,
@@ -14,7 +14,7 @@
   {
    "id": "chromecast",
    "title": "Chromecast with Google TV and the Google TV Streamer",
-   "version": "0.4.8 test build",
+   "version": "the 0.4.8-beta1 test build",
    "short": "the Home button helper.",
    "what": "The Home button helper: Google TV and its setup wizard stay on underneath, so casting keeps working, and Home opens the new home screen.",
    "match": {"brands": ["Google"], "devices": ["sabrina", "boreal", "kirkwood"]}
@@ -22,7 +22,7 @@
   {
    "id": "rocktek",
    "title": "RockTek Google TV boxes",
-   "version": "0.4.8 test build",
+   "version": "the 0.4.8-beta1 test build",
    "short": "the Home button helper.",
    "what": "The Home button helper, which keeps the setup wizard on, so casting keeps working too.",
    "match": {"brands": ["RockTek"]}
@@ -30,7 +30,7 @@
   {
    "id": "google-tv-helper",
    "title": "Google TV sets that keep their home screen because of the setup wizard",
-   "version": "0.4.8 test build",
+   "version": "the 0.4.8-beta1 test build",
    "short": "the Home button helper.",
    "what": "The Home button helper: the TV's own home screen and its setup wizard stay on, and pressing Home takes you to the new home screen.",
    "match": {"homes": ["com.google.android.apps.tv.launcherx"], "blocks": ["WIZARD_STAYS_ON", "WIZARD_WIFI", "WIZARD_WIFI_UNKNOWN"]}
