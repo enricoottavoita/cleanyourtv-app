@@ -1,19 +1,19 @@
 {
  "schema": 1,
- "generated_at": "2026-10-30",
+ "generated_at": "2026-10-31",
  "release": "0.4.7",
  "sources": {
   "lists": 173,
   "test_lists": 5,
   "reports": 937,
   "upstream": "b06ab21",
-  "confirmed": 54
+  "confirmed": 61
  },
  "links": {
   "issues": "https://github.com/udhaykumarbala/cleanyourtv-app/issues?q=",
   "list": "https://github.com/Gathin23/cleanyourtv/tree/b06ab21/examples/",
   "app": "https://github.com/udhaykumarbala/cleanyourtv-app/releases/latest",
-  "test_build": "https://github.com/udhaykumarbala/cleanyourtv-app/releases/tag/v0.4.8-beta1"
+  "test_build": "https://github.com/udhaykumarbala/cleanyourtv-app/releases/tag/v0.4.8-beta2"
  },
  "statuses": [
   {
@@ -63,12 +63,12 @@
   "BOOT_LOOP": {
    "why": "On this TV family the setup wizard comes back at every restart, and with the TV's own home screen off the TV can fail to start.",
    "short": "its setup wizard returns at every restart.",
-   "change": "The Home button helper, in the 0.4.8-beta1 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
+   "change": "The Home button helper, in the 0.4.8-beta2 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
   },
   "CASTING": {
    "why": "On this Google device the switch needs the setup wizard off, and casting from phones then stops after every restart.",
    "short": "casting would stop after a restart.",
-   "change": "The Home button helper, in the 0.4.8-beta1 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
+   "change": "The Home button helper, in the 0.4.8-beta2 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
   },
   "FIRE_OS": {
    "why": "Fire OS keeps Amazon's home screen, so the app does the clean-up only.",
@@ -96,7 +96,7 @@
   "REMOTE_BUTTONS": {
    "why": "The remote's app buttons only work through the TV's own home screen.",
    "short": "the remote's app buttons need it.",
-   "change": "The Home button helper, in the 0.4.8-beta1 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
+   "change": "The Home button helper, in the 0.4.8-beta2 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
   },
   "TCL_CN": {
    "why": "TCL's China firmware does not allow another home screen, so the app does the clean-up only.",
@@ -118,50 +118,50 @@
   "VENDOR_HOME": {
    "why": "A system service on this TV also answers the Home button, so the home screen is left alone.",
    "short": "a system service also answers Home.",
-   "change": "The Home button helper, in the 0.4.8-beta1 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
+   "change": "The Home button helper, in the 0.4.8-beta2 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
   },
   "WIZARD_STAYS_ON": {
    "why": "The TV's setup wizard stays on and could take over the Home button once the TV's own home screen is off.",
    "short": "its setup wizard could take over Home.",
-   "change": "The Home button helper, in the 0.4.8-beta1 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
+   "change": "The Home button helper, in the 0.4.8-beta2 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
   },
   "WIZARD_WIFI": {
    "why": "The TV's setup wizard saved its Wi-Fi, so the wizard has to stay on, and switching the home screen with it on can crash the TV.",
    "short": "its setup wizard saved the Wi-Fi.",
-   "change": "The Home button helper, in the 0.4.8-beta1 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
+   "change": "The Home button helper, in the 0.4.8-beta2 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
   },
   "WIZARD_WIFI_UNKNOWN": {
    "why": "The TV could not say who saved its Wi-Fi, so its setup wizard has to stay on, and switching the home screen with it on can crash the TV.",
    "short": "it could not say who saved the Wi-Fi.",
-   "change": "The Home button helper, in the 0.4.8-beta1 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
+   "change": "The Home button helper, in the 0.4.8-beta2 test build, leaves the TV's own home screen on and still opens the new one when you press Home."
   }
  },
  "coming_soon": [
   {
    "id": "xgimi-mogo-3-pro",
    "title": "XGIMI MoGo 3 Pro",
-   "version": "the 0.4.8-beta1 test build",
+   "version": "the 0.4.8-beta2 test build",
    "short": "the Home button helper.",
    "what": "The switch works, but the projector's remote keys turn Google TV's home screen back on. The Home button helper keeps Home on the new home screen."
   },
   {
    "id": "chromecast",
    "title": "Chromecast with Google TV and the Google TV Streamer",
-   "version": "the 0.4.8-beta1 test build",
+   "version": "the 0.4.8-beta2 test build",
    "short": "the Home button helper.",
    "what": "The Home button helper: Google TV and its setup wizard stay on underneath, so casting keeps working, and Home opens the new home screen."
   },
   {
    "id": "rocktek",
    "title": "RockTek Google TV boxes",
-   "version": "the 0.4.8-beta1 test build",
+   "version": "the 0.4.8-beta2 test build",
    "short": "the Home button helper.",
    "what": "The Home button helper, which keeps the setup wizard on, so casting keeps working too."
   },
   {
    "id": "google-tv-helper",
    "title": "Google TV sets that keep their home screen because of the setup wizard",
-   "version": "the 0.4.8-beta1 test build",
+   "version": "the 0.4.8-beta2 test build",
    "short": "the Home button helper.",
    "what": "The Home button helper: the TV's own home screen and its setup wizard stay on, and pressing Home takes you to the new home screen."
   }
@@ -312,7 +312,7 @@
   {"id":"grundig-grundig-google-uhd-tv-akropoli","brand":"GRUNDIG","name":"Grundig Google UHD TV","models":["Grundig Google UHD TV"],"codenames":["akropoli"],"android":["14"],"status":"soon","clean":"general","reason":"WIZARD_STAYS_ON","soon":"google-tv-helper","reports":2},
   {"id":"list-haier-h32s80efx","brand":"Haier","name":"H32S80EFX","models":["Haier MatrixTV CE"],"codenames":["deto"],"android":["14"],"status":"new","clean":"list","lists":["haier-h32s80efx"],"reports":0},
   {"id":"haier-haier-android-tv-dvb2k-broadway","brand":"Haier","name":"Haier Android TV DVB2K","models":["Haier Android TV DVB2K"],"codenames":["broadway"],"android":["14"],"status":"cleanup","clean":"brand","reason":"WIZARD_WIFI","lists":["haier-android-tv-dvb2k"],"reports":2},
-  {"id":"haier-haier-android-tv-ff-pro-daan","brand":"Haier","name":"Haier Android TV FF Pro","models":["Haier Android TV FF Pro"],"codenames":["daan"],"android":["14"],"status":"test","clean":"brand","reason":"TEST_R0","some":"WIZARD_STAYS_ON","confirm":{"have":1,"need":2,"android":"14"},"reports":4},
+  {"id":"haier-haier-android-tv-ff-pro-daan","brand":"Haier","name":"Haier Android TV FF Pro","models":["Haier Android TV FF Pro"],"codenames":["daan"],"android":["14"],"status":"test","clean":"brand","reason":"TEST_R0","some":"WIZARD_STAYS_ON","confirm":{"have":0,"need":2,"android":"14"},"reports":4},
   {"id":"haier-haier-android-tv-pro-daan","brand":"Haier","name":"Haier Android TV PRO","models":["Haier Android TV PRO"],"codenames":["daan"],"android":["14"],"status":"cleanup","clean":"brand","reason":"WIZARD_STAYS_ON","reports":1},
   {"id":"haier-haier-matrixtv-ael-irvine","brand":"Haier","name":"Haier MatrixTV AEL","models":["Haier MatrixTV AEL"],"codenames":["irvine"],"android":["14"],"status":"soon","clean":"brand","reason":"WIZARD_STAYS_ON","soon":"google-tv-helper","reports":1},
   {"id":"haier-haier-matrixtv-be-jordan","brand":"Haier","name":"Haier MatrixTV BE","models":["Haier MatrixTV BE"],"codenames":["jordan"],"android":["14"],"status":"soon","clean":"brand","reason":"WIZARD_WIFI","soon":"google-tv-helper","reports":6},
@@ -399,7 +399,7 @@
   {"id":"mecool-leap-s1-las","brand":"MECOOL","name":"LEAP-S1","models":["LEAP-S1"],"codenames":["LAS"],"android":["14"],"status":"new","clean":"brand","reports":1},
   {"id":"mecool-tv-stick-bos","brand":"MECOOL","name":"TV Stick","models":["TV Stick"],"codenames":["BOS"],"android":["14"],"status":"new","clean":"brand","reports":1},
   {"id":"mediatek-obe-r3ultra-mt5879","brand":"MediaTek","name":"OBE_R3Ultra","models":["OBE_R3Ultra"],"codenames":["mt5879"],"android":["11"],"status":"cleanup","clean":"general","reason":"UNKNOWN_HOME","reports":1},
-  {"id":"mi-miprojm05-eva","brand":"MI","name":"MiProjM05","models":["MiProjM05"],"codenames":["eva"],"android":["9"],"status":"test","clean":"general","reason":"TEST_R0","confirm":{"have":1,"need":2,"android":"9"},"reports":2},
+  {"id":"mi-miprojm05-eva","brand":"MI","name":"MiProjM05","models":["MiProjM05"],"codenames":["eva"],"android":["9"],"status":"test","clean":"general","reason":"TEST_R0","confirm":{"have":2,"need":2,"android":"9"},"reports":2},
   {"id":"micromax-ai-pont-ikebukuro","brand":"Micromax","name":"AI PONT","models":["AI PONT"],"codenames":["ikebukuro"],"android":["11"],"status":"new","clean":"list","lists":["ok-ai-pont-ikebukuro"],"reports":1},
   {"id":"model-model-x2-x2cube","brand":"Model","name":"Model-X2","models":["Model-X2"],"codenames":["X2CUBE"],"android":["9"],"status":"test","clean":"general","reason":"TEST_R0","confirm":{"have":0,"need":2,"android":"9"},"reports":1},
   {"id":"list-kalley-43g200","brand":"MOKA","name":"Kalley 43G200","models":[],"codenames":["R3_GTV"],"android":["14"],"status":"cleanup","clean":"list","reason":"BOOT_LOOP","lists":["kalley-43g200"],"reports":0},
@@ -538,7 +538,7 @@
   {"id":"skyworth-swtv-22sa-fhd-umeda","brand":"Skyworth","name":"SWTV-22SA-FHD","models":["SWTV-22SA-FHD"],"codenames":["umeda"],"android":["14"],"status":"soon","clean":"list","reason":"WIZARD_WIFI","soon":"google-tv-helper","lists":["skyworth-swtv-22ae-fhd"],"reports":1},
   {"id":"skyworth-swtv-24ae-fhd-beomil","brand":"Skyworth","name":"SWTV-24AE-FHD","models":["SWTV-24AE-FHD"],"codenames":["beomil"],"android":["14"],"status":"soon","clean":"brand","reason":"WIZARD_WIFI","soon":"google-tv-helper","reports":1},
   {"id":"skyworth-swtv-24sa-fhd-beomil","brand":"Skyworth","name":"SWTV-24SA-FHD","models":["SWTV-24SA-FHD"],"codenames":["beomil"],"android":["14"],"status":"soon","clean":"brand","reason":"WIZARD_WIFI","soon":"google-tv-helper","reports":1},
-  {"id":"skyworth-tv-stick-bos","brand":"Skyworth","name":"TV Stick","models":["TV Stick"],"codenames":["BOS"],"android":["11","14"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":1,"need":2,"android":"14"},"reports":2},
+  {"id":"skyworth-tv-stick-bos","brand":"Skyworth","name":"TV Stick","models":["TV Stick"],"codenames":["BOS"],"android":["11","14"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":0,"need":2,"android":"14"},"reports":2},
   {"id":"list-wanbo-x5-pro","brand":"SkyworthDigital","name":"Wanbo X5 Pro","models":["4K Google TV Stick"],"codenames":["YYT"],"android":["14"],"status":"new","clean":"list","lists":["wanbo-x5-pro"],"reports":0},
   {"id":"smart-lx352-smarttv350","brand":"Smart","name":"LX352","models":["LX352"],"codenames":["SmartTV350"],"android":["12"],"status":"cleanup","clean":"general","reason":"HOME_CHANGED","reports":2},
   {"id":"smart-tv-smart-tv-smart-tv","brand":"Smart TV","name":"Smart TV","models":["Smart TV"],"codenames":["Smart TV"],"android":["12"],"status":"cleanup","clean":"general","reason":"UNKNOWN_HOME","reports":2},
@@ -578,10 +578,10 @@
   {"id":"list-stellamore-t950s","brand":"Stellamore","name":"T950S","models":[],"codenames":["r34a1"],"android":["13"],"status":"cleanup","clean":"list","reason":"UNKNOWN_HOME","lists":["stellamore-t950s"],"reports":0},
   {"id":"stream-str-d2-g4k-yyr","brand":"STREAM","name":"STR-D2 G4K","models":["STR-D2 G4K"],"codenames":["YYR"],"android":["14"],"status":"cleanup","clean":"general","reason":"HOME_CHANGED","reports":1},
   {"id":"stream-stream-tv-g4k-sepolia","brand":"STREAM","name":"Stream TV G4K","models":["Stream TV G4K"],"codenames":["sepolia"],"android":["14"],"status":"soon","clean":"brand","reason":"WIZARD_WIFI","soon":"google-tv-helper","reports":1},
-  {"id":"strong-4k-android-tv-box-yyc","brand":"Strong","name":"4K Android TV Box","models":["4K Android TV Box"],"codenames":["YYC"],"android":["14"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":1,"need":2,"android":"14"},"reports":2},
+  {"id":"strong-4k-android-tv-box-yyc","brand":"Strong","name":"4K Android TV Box","models":["4K Android TV Box"],"codenames":["YYC"],"android":["14"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":2,"need":2,"android":"14"},"reports":2},
   {"id":"strong-4k-google-tv-box-yda","brand":"Strong","name":"4K Google TV Box","models":["4K Google TV Box"],"codenames":["YDA"],"android":["14"],"status":"soon","clean":"brand","reason":"WIZARD_WIFI","soon":"google-tv-helper","reports":3},
   {"id":"strong-ai-pont-alimos","brand":"Strong","name":"AI PONT","models":["AI PONT"],"codenames":["alimos"],"android":["14"],"status":"soon","clean":"general","reason":"WIZARD_WIFI","soon":"google-tv-helper","reports":2},
-  {"id":"strong-leap-s1-las","brand":"Strong","name":"LEAP-S1","models":["LEAP-S1"],"codenames":["LAS"],"android":["14"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":1,"need":2,"android":"14"},"reports":1},
+  {"id":"strong-leap-s1-las","brand":"Strong","name":"LEAP-S1","models":["LEAP-S1"],"codenames":["LAS"],"android":["14"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":2,"need":2,"android":"14"},"reports":1},
   {"id":"sundirectmax-sundirectmax-sei730sun","brand":"SunDirectMax","name":"SunDirectMax","models":["SunDirectMax"],"codenames":["SEI730SUN"],"android":["12"],"status":"cleanup","clean":"general","reason":"UNKNOWN_HOME","reports":1},
   {"id":"sw-sw-22ae-nf-sw6h","brand":"SW","name":"SW-22AE NF","models":["SW-22AE NF"],"codenames":["SW6H"],"android":["11","14"],"status":"soon","clean":"list","reason":"WIZARD_STAYS_ON","soon":"google-tv-helper","lists":["skyworth-sw-22sa"],"reports":6},
   {"id":"sw-swtv-20ae-sw4h","brand":"SW","name":"SWTV-20AE","models":["SWTV-20AE"],"codenames":["SW4H"],"android":["11"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":0,"need":2,"android":"11"},"reports":1},
@@ -635,11 +635,11 @@
   {"id":"list-thomson-t32rtl6000","brand":"Thomson","name":"T32RTL6000","models":["ATV R1"],"codenames":["R1"],"android":["9"],"status":"new","clean":"list","lists":["thomson-t32rtl6000"],"reports":0},
   {"id":"thomson-thomson-tv-cottongreen","brand":"Thomson","name":"Thomson TV","models":["Thomson TV"],"codenames":["cottongreen"],"android":["14"],"status":"soon","clean":"brand","reason":"WIZARD_STAYS_ON","soon":"google-tv-helper","reports":2},
   {"id":"thomson-thomson-tv-nagata","brand":"Thomson","name":"Thomson TV","models":["Thomson TV"],"codenames":["nagata"],"android":["14"],"status":"cleanup","clean":"brand","reason":"VENDOR_HOME","reports":1},
-  {"id":"thomson-kodak-path-7xpro-ledtv32hd","brand":"THOMSON_KODAK","name":"PATH_7XPRO","models":["PATH_7XPRO"],"codenames":["LEDTV32HD"],"android":["9"],"status":"test","clean":"general","reason":"TEST_R0","confirm":{"have":0,"need":2,"android":"9"},"reports":2},
+  {"id":"thomson-kodak-path-7xpro-ledtv32hd","brand":"THOMSON_KODAK","name":"PATH_7XPRO","models":["PATH_7XPRO"],"codenames":["LEDTV32HD"],"android":["9"],"status":"test","clean":"general","reason":"TEST_R0","confirm":{"have":1,"need":2,"android":"9"},"reports":2},
   {"id":"tim-timvisionbox-m393gena-tim","brand":"TIM","name":"TIMVISIONBOX","models":["TIMVISIONBOX"],"codenames":["m393gena_tim"],"android":["12"],"status":"cleanup","clean":"general","reason":"UNKNOWN_HOME","reports":1},
-  {"id":"toshiba-hismart-2k-atv4-hamamatsucho","brand":"Toshiba","name":"HiSmart 2K ATV4","models":["HiSmart 2K ATV4"],"codenames":["hamamatsucho"],"android":["11"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":1,"need":2,"android":"11"},"reports":1},
-  {"id":"toshiba-smart-tv-hamamatsucho","brand":"Toshiba","name":"Smart TV","models":["Smart TV"],"codenames":["hamamatsucho"],"android":["11"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":1,"need":2,"android":"11"},"reports":1},
-  {"id":"toshiba-toshiba-tv-hayward","brand":"Toshiba","name":"Toshiba TV","models":["Toshiba TV"],"codenames":["hayward"],"android":["11"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":1,"need":2,"android":"11"},"reports":2},
+  {"id":"toshiba-hismart-2k-atv4-hamamatsucho","brand":"Toshiba","name":"HiSmart 2K ATV4","models":["HiSmart 2K ATV4"],"codenames":["hamamatsucho"],"android":["11"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":2,"need":2,"android":"11"},"reports":1},
+  {"id":"toshiba-smart-tv-hamamatsucho","brand":"Toshiba","name":"Smart TV","models":["Smart TV"],"codenames":["hamamatsucho"],"android":["11"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":2,"need":2,"android":"11"},"reports":1},
+  {"id":"toshiba-toshiba-tv-hayward","brand":"Toshiba","name":"Toshiba TV","models":["Toshiba TV"],"codenames":["hayward"],"android":["11"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":2,"need":2,"android":"11"},"reports":2},
   {"id":"toshiba-toshiba-tv-nova72691","brand":"Toshiba","name":"Toshiba_TV","models":["Toshiba_TV"],"codenames":["NOVA72691"],"android":["9"],"status":"cleanup","clean":"general","reason":"UNKNOWN_HOME","reports":1},
   {"id":"tplay-telecentro-4k-sei800tct","brand":"TPLAY","name":"Telecentro 4K","models":["Telecentro 4K"],"codenames":["SEI800TCT"],"android":["12"],"status":"cleanup","clean":"general","reason":"UNKNOWN_HOME","reports":1},
   {"id":"tuvio-td32hfbsv1-td32hfbsv1-st3151a11-08-zxbd","brand":"TUVIO","name":"TD32HFBSV1","models":["TD32HFBSV1"],"codenames":["TD32HFBSV1.ST3151A11-08-ZXBD"],"android":["11"],"status":"cleanup","clean":"general","reason":"UNKNOWN_HOME","reports":1},
@@ -653,8 +653,8 @@
   {"id":"vu-vu-4k-google-tv-keoneae","brand":"VU","name":"VU 4K Google TV","models":["VU 4K Google TV"],"codenames":["keoneae"],"android":["14"],"status":"soon","clean":"general","reason":"WIZARD_STAYS_ON","soon":"google-tv-helper","reports":1},
   {"id":"waiputv-waipu-tv-stick-sei700wp","brand":"waiputv","name":"waipu tv stick","models":["waipu tv stick"],"codenames":["SEI700WP"],"android":["11"],"status":"cleanup","clean":"general","reason":"UNKNOWN_HOME","reports":1},
   {"id":"waiputv-waipu-tv-box-seid00bwp","brand":"waiputv","name":"waipu.tv Box","models":["waipu.tv Box"],"codenames":["SEID00BWP"],"android":["14"],"status":"cleanup","clean":"general","reason":"UNKNOWN_HOME","reports":1},
-  {"id":"walton-walton-android-tv-tamachi","brand":"WALTON","name":"WALTON Android TV","models":["WALTON Android TV"],"codenames":["tamachi"],"android":["9","11"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":0,"need":2,"android":"9"},"reports":3},
-  {"id":"walton-walton-android-tv-yeongdeungpo","brand":"WALTON","name":"WALTON Android TV","models":["WALTON Android TV"],"codenames":["yeongdeungpo"],"android":["11"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":0,"need":2,"android":"11"},"reports":1},
+  {"id":"walton-walton-android-tv-tamachi","brand":"WALTON","name":"WALTON Android TV","models":["WALTON Android TV"],"codenames":["tamachi"],"android":["9","11"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":1,"need":2,"android":"11"},"reports":3},
+  {"id":"walton-walton-android-tv-yeongdeungpo","brand":"WALTON","name":"WALTON Android TV","models":["WALTON Android TV"],"codenames":["yeongdeungpo"],"android":["11"],"status":"test","clean":"brand","reason":"TEST_R0","confirm":{"have":1,"need":2,"android":"11"},"reports":1},
   {"id":"wansa-ai-pont-alimos","brand":"WANSA","name":"AI PONT","models":["AI PONT"],"codenames":["alimos"],"android":["14"],"status":"soon","clean":"general","reason":"WIZARD_WIFI","soon":"google-tv-helper","reports":1},
   {"id":"wansa-ai-pont-redwood","brand":"WANSA","name":"AI PONT","models":["AI PONT"],"codenames":["redwood"],"android":["11"],"status":"test","clean":"general","reason":"TEST_R0","confirm":{"have":0,"need":2,"android":"11"},"reports":1},
   {"id":"list-verizon-stream-tv","brand":"wnc","name":"Verizon Stream TV","models":["Stream TV"],"codenames":[],"android":["12"],"status":"cleanup","clean":"list","reason":"UNKNOWN_HOME","lists":["verizon-stream-tv"],"reports":0},
